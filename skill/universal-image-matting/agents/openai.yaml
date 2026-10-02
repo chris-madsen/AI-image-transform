@@ -1,0 +1,4 @@
+interface:
+  display_name: Universal Image Matting
+  short_description: Local alpha matting with halo validation
+  default_prompt: Process the supplied image locally, preserve source RGB, create an alpha-only transparent PNG, and show navy/black/white/checkerboard validation previews.

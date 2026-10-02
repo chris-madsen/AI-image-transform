@@ -1,0 +1,34 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Runtime/generated data
+artifacts/*
+!artifacts/.gitkeep
+.models/
+
+# Node / Photopea outer environment
+bridge/node_modules/
+npm-debug.log*
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
