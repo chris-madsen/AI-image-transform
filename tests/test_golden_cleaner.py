@@ -38,7 +38,7 @@ def cases() -> list[tuple[str, np.ndarray, ProcessingPolicy, set[JobStatus]]]:
     light_detail = _base(); light_detail[18:48, 18:48, :3] = [20, 20, 20]; light_detail[28:36, 28:36, :3] = [235, 235, 235]
     cases.append(("light-internal-detail", light_detail, ProcessingPolicy(must_keep=("light detail",)), {JobStatus.PASSED, JobStatus.REVIEW_REQUIRED}))
 
-    typography = _base(); ImageDraw.Draw(Image.fromarray(typography, mode="RGBA")).text((20, 25), "A", fill=(255, 255, 255, 255))
+    typography = _base(); typography_image = Image.fromarray(typography, mode="RGBA"); ImageDraw.Draw(typography_image).text((20, 25), "A", fill=(255, 255, 255, 255)); typography = np.asarray(typography_image).copy()
     cases.append(("typography", typography, ProcessingPolicy(must_keep=("all text",)), {JobStatus.PASSED, JobStatus.REVIEW_REQUIRED, JobStatus.REFUSED}))
 
     smoke = _base(); smoke[20:44, 20:44, :3] = [150, 150, 150]; smoke[20:44, 20:44, 3] = 80
@@ -56,10 +56,13 @@ def cases() -> list[tuple[str, np.ndarray, ProcessingPolicy, set[JobStatus]]]:
 
 
 @pytest.mark.parametrize("index", range(8))
-def test_golden_classes_produce_safe_decisions(cases, index: int, tmp_path: Path) -> None:
+def test_golden_classes_produce_explicit_safe_decisions(cases, index: int, tmp_path: Path) -> None:
     name, source, policy, allowed = cases[index]
     report = process_image_bytes(_png(source), policy, tmp_path / name)
-    assert report.status in allowed
-    assert report.validation.protected_detail_score == 1.0
+    # No fixture may claim success while the mandatory Photopea/PSD stage is
+    # unavailable. Ambiguous cases are therefore explicit review decisions.
+    assert report.status is JobStatus.REVIEW_REQUIRED
+    if policy.must_keep or policy.keep_if_intentional or policy.remove_only:
+        assert "semantic_masks" in report.validation.review_regions
     assert report.artifacts
     assert report.inspection.source_sha256

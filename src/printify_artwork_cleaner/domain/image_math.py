@@ -79,7 +79,7 @@ def protected_mask(policy: ProcessingPolicy, shape: tuple[int, int]) -> np.ndarr
     return result
 
 
-def inspect_rgba(rgba: np.ndarray, policy: ProcessingPolicy) -> tuple[ArtworkInspection, np.ndarray]:
+def inspect_rgba(rgba: np.ndarray, policy: ProcessingPolicy, source_bytes_sha256: str | None = None) -> tuple[ArtworkInspection, np.ndarray]:
     source = np.asarray(rgba, dtype=np.uint8)
     profile = alpha_profile(source)
     connected = edge_connected_background_mask(source, policy.background_tolerance)
@@ -108,7 +108,8 @@ def inspect_rgba(rgba: np.ndarray, policy: ProcessingPolicy) -> tuple[ArtworkIns
         classification=classification,
         border_connected_pixels=connected_pixels,
         crop_risk=crop_risk,
-        source_sha256=image_sha256(source),
+        source_sha256=source_bytes_sha256 or image_sha256(source),
+        canonical_pixels_sha256=image_sha256(source),
         warnings=warnings,
     )
     return inspection, connected
@@ -155,6 +156,9 @@ def halftone_alpha(alpha: np.ndarray, cell: int = 8) -> np.ndarray:
          [2, 50, 14, 62, 1, 49, 13, 61], [34, 18, 46, 30, 33, 17, 45, 29],
          [10, 58, 6, 54, 9, 57, 5, 53], [42, 26, 38, 22, 41, 25, 37, 23]], dtype=np.float32
     )
-    screen = np.tile((matrix + 0.5) / 64, (1 + alpha.shape[0] // 8, 1 + alpha.shape[1] // 8))
+    # Scale the Bayer screen by the requested cell size. Different cells must
+    # produce different dot frequencies; the old implementation ignored cell.
+    screen = np.repeat(np.repeat((matrix + 0.5) / 64, cell, axis=0), cell, axis=1)
+    screen = np.tile(screen, (1 + alpha.shape[0] // screen.shape[0], 1 + alpha.shape[1] // screen.shape[1]))
     screen = screen[: alpha.shape[0], : alpha.shape[1]]
     return np.where(np.asarray(alpha, dtype=np.float32) / 255 >= screen, 255, 0).astype(np.uint8)

@@ -62,8 +62,8 @@ def test_async_job_contract_and_artifacts(tmp_path: Path) -> None:
         data={"policy_json": "{}", "manifest_json": "{}"},
         headers={"Idempotency-Key": "test-1"},
     )
-    assert retry.status_code == 202
-    assert retry.json()["job_id"] == job_id
+    assert retry.status_code == 409
+    assert retry.json()["detail"]["code"] == "idempotency_conflict"
 
 
 def test_auth_and_invalid_policy(tmp_path: Path) -> None:
@@ -81,3 +81,9 @@ def test_auth_and_invalid_policy(tmp_path: Path) -> None:
         headers={"Authorization": "Bearer secret"},
     )
     assert invalid.status_code == 422
+
+
+def test_artifact_paths_reject_traversal(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path, psd_exporter=FakePhotopeaExporter()))
+    assert client.get("/v1/jobs/../secrets").status_code in {400, 404}
+    assert client.get("/v1/artifacts/../../secret.txt").status_code in {400, 404}

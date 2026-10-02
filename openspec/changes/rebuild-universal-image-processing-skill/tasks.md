@@ -28,7 +28,7 @@
 ## 5. Async service shell
 
 - [x] 5.1 Implement FastAPI/uvicorn endpoints for job submission, status, artifact listing/download and health; verify OpenAPI routes and HTTP error contracts.
-- [x] 5.2 Implement async executor orchestration from ingest through packaging, including mandatory Photopea PSD export and explicit bridge-unavailable review/failed states; verify POST → poll → artifacts integration test.
+- [ ] 5.2 Implement async executor orchestration from ingest through packaging, including mandatory Photopea PSD export and explicit bridge-unavailable review/failed states; verify POST → poll → artifacts integration test with a real Photopea export.
 - [x] 5.3 Add bearer authentication, request limits, correlation/job identifiers, JSON logs and Prometheus RED/domain metrics without high-cardinality labels; verify redaction and `/metrics` smoke tests.
 
 ## 6. Skill and deployment adapters
@@ -36,10 +36,10 @@
 - [x] 6.1 Update `skill/universal-image-matting/SKILL.md` with the structured policy contract, service invocation workflow, fail-closed rules and artifact interpretation; verify every documented command is executable or explicitly marked deployment-only.
 - [x] 6.2 Add a Skill helper for creating policy JSON, submitting multipart jobs, polling status and downloading bundles; verify it handles review_required/refused/failed distinctly.
 - [x] 6.3 Document Named Cloudflare Tunnel deployment with environment-injected URL/token and no Printify credentials; verify local service remains runnable without Cloudflare.
-- [x] 6.4 Implement and document the Photopea Live outer-environment bridge; verify core processing cannot report `passed` with a missing PSD bridge.
+- [ ] 6.4 Implement and document the Photopea Live outer-environment bridge; verify real PSD structure and that core processing cannot report `passed` with a missing PSD bridge.
 
 ## 7. Verification and completion
 
-- [x] 7.1 Add golden fixtures/tests for animal/text/splashes, vegetation, light internal details, typography, smoke, baked checkerboard, boundary-touching and ambiguous cases; verify expected status and protected-detail invariants.
+- [ ] 7.1 Add approved source/protection/removal golden fixtures/tests for animal/text/splashes, vegetation, light internal details, typography, smoke, baked checkerboard, boundary-touching and ambiguous cases; verify exact statuses and protected-detail invariants.
 - [ ] 7.2 Run full deterministic test suite, OpenSpec validation and Photopea Live API adapter/service smoke test; verify `pytest`, `openspec validate rebuild-universal-image-processing-skill --type change --strict` and local HTTP flow all pass.
 - [ ] 7.3 Re-read all OpenSpec context files, mark only fully implemented checkboxes complete and produce a requirement-to-evidence summary with artifact paths; verify `openspec status --change rebuild-universal-image-processing-skill` reports all tasks complete.

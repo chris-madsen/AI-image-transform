@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -9,17 +10,17 @@ import numpy as np
 from PIL import Image
 
 from .adapters.photopea import PhotopeaLiveApiUnavailable
-from .domain.image_math import compose_alpha, inspect_rgba, protected_mask
-from .domain.models import Artifact, JobStatus, ProcessingPolicy, ProcessingReport
-from .domain.rendering import BACKGROUNDS, apply_variant, checkerboard, composite
+from .domain.image_math import compose_alpha, inspect_rgba, protected_mask, resize_rgba_premultiplied
+from .domain.models import Artifact, JobStatus, ProcessingMode, ProcessingPolicy, ProcessingReport, ResolvedMaskBundle, StageStatus
+from .domain.rendering import BACKGROUNDS, apply_variant, build_render_plan, checkerboard, composite, dtg_underbase_preview
 from .domain.validation import validate_candidate
 
 PIPELINE_VERSION = "2026.10.02.1"
 
 
-def _save_rgba(rgba: np.ndarray, path: Path) -> None:
+def _save_rgba(rgba: np.ndarray, path: Path, dpi: int = 300) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(rgba, mode="RGBA").save(path, format="PNG", dpi=(300, 300), optimize=False)
+    Image.fromarray(rgba, mode="RGBA").save(path, format="PNG", dpi=(dpi, dpi), optimize=False)
 
 
 def _save_rgb(rgb: np.ndarray, path: Path) -> None:
@@ -33,22 +34,65 @@ def _write_artifact(path: Path, name: str, media_type: str) -> Artifact:
     return Artifact(name, name, media_type, path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest())
 
 
-def process_image_bytes(source_bytes: bytes, policy: ProcessingPolicy, output_dir: Path, psd_exporter=None) -> ProcessingReport:
+def _apply_canvas(rgba: np.ndarray, policy: ProcessingPolicy) -> np.ndarray:
+    if policy.canvas_width is None or policy.canvas_height is None:
+        return rgba
+    target_w, target_h = policy.canvas_width, policy.canvas_height
+    margin = min(policy.canvas_margin, target_w // 2, target_h // 2)
+    available_w, available_h = target_w - 2 * margin, target_h - 2 * margin
+    scale = min(available_w / rgba.shape[1], available_h / rgba.shape[0])
+    resized = resize_rgba_premultiplied(rgba, (max(1, round(rgba.shape[1] * scale)), max(1, round(rgba.shape[0] * scale))))
+    canvas = np.zeros((target_h, target_w, 4), dtype=np.uint8)
+    left = (target_w - resized.shape[1]) // 2
+    top = (target_h - resized.shape[0]) // 2
+    canvas[top:top + resized.shape[0], left:left + resized.shape[1]] = resized
+    return canvas
+
+
+def process_image_bytes(
+    source_bytes: bytes,
+    policy: ProcessingPolicy,
+    output_dir: Path,
+    psd_exporter=None,
+    resolved_masks: ResolvedMaskBundle | None = None,
+) -> ProcessingReport:
     with Image.open(__import__("io").BytesIO(source_bytes)) as image:
         source = np.asarray(image.convert("RGBA"), dtype=np.uint8).copy()
-    inspection, background = inspect_rgba(source, policy)
+    inspection, background = inspect_rgba(source, policy, hashlib.sha256(source_bytes).hexdigest())
     protected = protected_mask(policy, source.shape[:2])
-    alpha = compose_alpha(source[..., 3], background, protected)
+    semantic_requested = bool(policy.must_keep or policy.keep_if_intentional or policy.remove_only)
+    semantic_mask_missing = semantic_requested and resolved_masks is None
+    removal = np.asarray(background, dtype=bool)
+    if resolved_masks is not None and resolved_masks.removable_background is not None:
+        removal |= np.asarray(resolved_masks.removable_background, dtype=bool)
+    if resolved_masks is not None and resolved_masks.semantic_protection is not None:
+        protected |= np.asarray(resolved_masks.semantic_protection, dtype=bool)
+    alpha = compose_alpha(source[..., 3], removal, protected)
     base = np.dstack((source[..., :3], alpha)).astype(np.uint8)
+    base = _apply_canvas(base, policy)
+    validation_source = _apply_canvas(source, policy)
     variants = tuple(dict.fromkeys(policy.requested_variants or ("conservative", "artistic")))
-    outputs: dict[str, np.ndarray] = {name: apply_variant(base, name, policy) for name in variants}
-    chosen = outputs.get("conservative", next(iter(outputs.values())))
-    validation = validate_candidate(chosen, source, inspection, policy, protected)
+    if policy.mode is ProcessingMode.INSPECT:
+        variants = ("conservative",)
+    render_plan = build_render_plan(policy, variants)
+    outputs: dict[str, np.ndarray] = {name: apply_variant(base, name, policy, render_plan) for name in variants}
+    validation_protected = _apply_canvas(np.dstack((protected.astype(np.uint8) * 255,) * 3 + (protected.astype(np.uint8) * 255,)), policy)[..., 3] > 0 if policy.canvas_width else protected
+    validations = {name: validate_candidate(output, validation_source, inspection, policy, validation_protected) for name, output in outputs.items()}
+    chosen_name = "conservative" if "conservative" in outputs else variants[0]
+    chosen = outputs[chosen_name]
+    validation = validations[chosen_name]
+    if semantic_mask_missing:
+        validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "semantic_policy_has_no_pixel_masks"), review_regions=(*validation.review_regions, "semantic_masks"))
+    if policy.mode is ProcessingMode.INSPECT:
+        validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "inspect_mode_does_not_process_artwork"), review_regions=(*validation.review_regions, "inspect_mode"))
+    failing_variants = tuple(name for name, result in validations.items() if result.status is not JobStatus.PASSED)
+    if failing_variants:
+        validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, f"variant_validation_failed:{','.join(failing_variants)}"), review_regions=(*validation.review_regions, "variant_validation"))
     output_dir.mkdir(parents=True, exist_ok=True)
     artifacts: list[Artifact] = []
     for name, rgba in outputs.items():
         path = output_dir / f"artwork_{name}.png"
-        _save_rgba(rgba, path)
+        _save_rgba(rgba, path, policy.canvas_dpi)
         artifacts.append(_write_artifact(path, path.name, "image/png"))
         for background_name, color in BACKGROUNDS.items():
             preview_path = output_dir / f"preview_{name}_{background_name}.png"
@@ -62,24 +106,40 @@ def process_image_bytes(source_bytes: bytes, policy: ProcessingPolicy, output_di
         artifacts.append(_write_artifact(mask_path, mask_path.name, "image/png"))
 
     dtg_path = output_dir / "preview_dtg_underbase.png"
-    _save_rgb(composite(chosen, (255, 255, 255)), dtg_path)
+    garment_name = next((name for name in policy.target_garments if name in BACKGROUNDS), "navy")
+    _save_rgb(dtg_underbase_preview(chosen, BACKGROUNDS[garment_name]), dtg_path)
     artifacts.append(_write_artifact(dtg_path, dtg_path.name, "image/png"))
     alpha_path = output_dir / "alpha_mask.png"
     _save_rgb(np.repeat(chosen[..., 3, None], 3, axis=-1), alpha_path)
     artifacts.append(_write_artifact(alpha_path, alpha_path.name, "image/png"))
     bridge_warning: str | None = None
+    photopea_status = "not_configured"
+    psd_status = "not_checked"
     if psd_exporter is not None:
         psd_path = output_dir / "artwork_editable.psd"
         try:
-            psd_path.write_bytes(psd_exporter.export(source, chosen, chosen[..., 3]))
+            psd_path.write_bytes(psd_exporter.export(validation_source, chosen, chosen[..., 3]))
             artifacts.append(_write_artifact(psd_path, psd_path.name, "image/vnd.adobe.photoshop"))
+            photopea_status = "passed"
+            psd_status = "unverified_payload"
         except PhotopeaLiveApiUnavailable as exc:
             bridge_warning = f"photopea_live_api_unavailable: {exc}"
+            photopea_status = "failed"
+            psd_status = "failed"
     else:
         bridge_warning = "photopea_live_api_not_configured"
 
     if bridge_warning:
         validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, bridge_warning), review_regions=(*validation.review_regions, "photopea_live_api"))
+    if psd_status != "passed":
+        validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "psd_structure_unverified"), review_regions=(*validation.review_regions, "psd_validation"))
+    stage = StageStatus(
+        ai_mask_status="review_required" if semantic_mask_missing else ("provided" if resolved_masks else "deterministic_only"),
+        photopea_processing_status=photopea_status,
+        psd_validation_status=psd_status,
+        png_validation_status="passed" if not failing_variants else "review_required",
+        overall_status=validation.status,
+    )
     report = ProcessingReport(
         status=validation.status,
         inspection=inspection,
@@ -89,6 +149,8 @@ def process_image_bytes(source_bytes: bytes, policy: ProcessingPolicy, output_di
         variants=variants,
         artifacts=tuple(artifacts),
         changed_rgb=validation.changed_pixels > 0,
+        stage_status=stage,
+        variant_validations=validations,
     )
     report_path = output_dir / "report.json"
     report_path.write_text(json.dumps({"policy": asdict(policy), **report.as_dict()}, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")

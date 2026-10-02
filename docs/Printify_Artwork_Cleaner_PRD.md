@@ -207,3 +207,30 @@ The MVP is accepted when:
 - Golden tests preserve protected details.
 - The product has no mandatory Printify, MCP, Etsy or ChatGPT runtime dependency.
 - Photopea can open the produced PSD and continue manual editing.
+
+## 13. Semantic mask contract
+
+The Skill or an approved vision provider MUST provide pixel-level artifacts
+when semantic intent is present:
+
+```text
+semantic_protection_mask.png
+candidate_removal_mask.png
+uncertainty_mask.png
+manual_corrections.png
+```
+
+The words `eyes`, `text`, `ears` or `leaves` are not pixel protection by
+themselves. Missing semantic masks produce `review_required`.
+
+## 14. Stage status contract
+
+The report MUST distinguish `ai_mask_status`, `photopea_processing_status`,
+`psd_validation_status`, `png_validation_status` and `overall_status`.
+`overall_status=passed` is allowed only when all mandatory stages pass.
+
+## 15. Canvas policy
+
+The policy MAY request a target canvas width, height, margin and DPI. Supported
+production examples include 4200x4800 and 4500x5400. Artwork is resized with
+premultiplied alpha, centered on a transparent canvas and never cropped.

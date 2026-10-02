@@ -11,10 +11,6 @@ function authorized(request) {
   return !token || request.get("authorization") === `Bearer ${token}`;
 }
 
-function dataUrl(file) {
-  return `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
-}
-
 function photopeaScript() {
   return `
     (function () {
@@ -25,11 +21,15 @@ function photopeaScript() {
       source.name = "SOURCE BACKUP";
       artwork.name = "WORKING ART";
       mask.name = "WORKING MASK";
-      source.__cleanerExported = true;
       app.activeDocument = source;
       try {
-        artwork.activeLayer.duplicate(source);
-        mask.activeLayer.duplicate(source);
+        source.activeLayer.name = "SOURCE BACKUP";
+        artwork.activeLayer.duplicate(source).name = "WORKING ART";
+        mask.activeLayer.duplicate(source).name = "WORKING MASK";
+        ["BLACK", "WHITE", "GRAY", "NAVY", "BLUE JEAN"].forEach(function (name) {
+          var layer = source.artLayers.add();
+          layer.name = name + " (COLOR FILL TEST)";
+        });
       } catch (error) {
         app.echoToOE("PHOTOPEA_LAYER_WARNING:" + error.toString());
       }
@@ -49,6 +49,7 @@ async function exportViaPhotopea(files) {
     const page = await browser.newPage();
     const result = await new Promise(async (resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("photopea export timed out")), 180_000);
+      await page.exposeFunction("getPhotopeaFile", (index) => Array.from(files[index].buffer));
       await page.exposeFunction("receivePhotopeaBinary", (values) => {
         clearTimeout(timer);
         resolve(Buffer.from(values));
@@ -56,16 +57,32 @@ async function exportViaPhotopea(files) {
       await page.setContent(`
         <!doctype html><html><body>
           <iframe id="photopea" style="width:1px;height:1px;border:0"
-            src="${"https://www.photopea.com/#" + encodeURIComponent(JSON.stringify({
-              files: files.map(dataUrl),
-              script: photopeaScript(),
-            }))}"></iframe>
+            src="https://www.photopea.com/#${encodeURIComponent(JSON.stringify({}))}"></iframe>
           <script>
             const frame = document.getElementById('photopea');
+            let phase = 'boot';
+            let fileIndex = 0;
+            async function sendFile(index) {
+              const values = await window.getPhotopeaFile(index);
+              const buffer = new Uint8Array(values).buffer;
+              frame.contentWindow.postMessage(buffer, '*', [buffer]);
+            }
             window.addEventListener('message', (event) => {
               if (event.source !== frame.contentWindow) return;
               if (event.data instanceof ArrayBuffer) {
                 window.receivePhotopeaBinary(Array.from(new Uint8Array(event.data)));
+                return;
+              }
+              if (event.data !== 'done') return;
+              if (phase === 'boot') {
+                phase = 'files';
+                sendFile(fileIndex);
+              } else if (phase === 'files' && fileIndex < ${files.length - 1}) {
+                fileIndex += 1;
+                sendFile(fileIndex);
+              } else if (phase === 'files') {
+                phase = 'script';
+                frame.contentWindow.postMessage(${JSON.stringify(photopeaScript())}, '*');
               }
             });
           </script>

@@ -10,5 +10,11 @@ class PsdExporter(Protocol):
     def export(self, source: np.ndarray, artwork: np.ndarray, mask: np.ndarray) -> bytes: ...
 
 
+class VisionProvider(Protocol):
+    """External semantic/pixel-mask provider; absence is an explicit review state."""
+
+    def resolve_masks(self, source: np.ndarray, policy: object) -> object: ...
+
+
 class ArtifactStore(Protocol):
     def job_dir(self, job_id: str) -> Path: ...

@@ -34,6 +34,14 @@ class ProcessingMode(StrEnum):
     AUTO = "auto"
 
 
+class VariantName(StrEnum):
+    CONSERVATIVE = "conservative"
+    ARTISTIC = "artistic"
+    HALFTONE = "halftone"
+    BINARY_ALPHA = "binary_alpha"
+    CONTROLLED_SOFT_ALPHA = "controlled_soft_alpha"
+
+
 @dataclass(frozen=True, slots=True)
 class DomainError:
     code: str
@@ -85,6 +93,10 @@ class ProcessingPolicy:
     protected_regions: tuple[ProtectedRegion, ...] = ()
     background_tolerance: int = 24
     halftone_cell: int = 8
+    canvas_width: int | None = None
+    canvas_height: int | None = None
+    canvas_dpi: int = 300
+    canvas_margin: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +125,7 @@ class ArtworkInspection:
     border_connected_pixels: int
     crop_risk: bool
     source_sha256: str
+    canonical_pixels_sha256: str = ""
     warnings: tuple[str, ...] = ()
 
 
@@ -123,6 +136,27 @@ class MaskRevision:
     mask_sha256: str
     operations: tuple[str, ...] = ()
     confidence: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedMaskBundle:
+    """Frozen pixel-level intent. Text labels alone never become protection."""
+
+    semantic_protection: Any | None = None
+    removable_background: Any | None = None
+    uncertainty: Any | None = None
+    manual_corrections: Any | None = None
+    confidence: float = 0.0
+    provenance: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StageStatus:
+    ai_mask_status: str
+    photopea_processing_status: str
+    psd_validation_status: str
+    png_validation_status: str
+    overall_status: JobStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +189,8 @@ class ProcessingReport:
     variants: tuple[str, ...]
     artifacts: tuple[Artifact, ...] = ()
     changed_rgb: bool = False
+    stage_status: StageStatus | None = None
+    variant_validations: dict[str, ValidationResult] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -170,6 +206,7 @@ class ProcessingReport:
                 "border_connected_pixels": self.inspection.border_connected_pixels,
                 "crop_risk": self.inspection.crop_risk,
                 "source_sha256": self.inspection.source_sha256,
+                "canonical_pixels_sha256": self.inspection.canonical_pixels_sha256,
                 "warnings": list(self.inspection.warnings),
             },
             "validation": {
@@ -182,6 +219,17 @@ class ProcessingReport:
                 "review_regions": list(self.validation.review_regions),
             },
             "artifacts": [asdict(artifact) for artifact in self.artifacts],
+            "stage_status": {
+                "ai_mask_status": self.stage_status.ai_mask_status,
+                "photopea_processing_status": self.stage_status.photopea_processing_status,
+                "psd_validation_status": self.stage_status.psd_validation_status,
+                "png_validation_status": self.stage_status.png_validation_status,
+                "overall_status": self.stage_status.overall_status.value,
+            } if self.stage_status else None,
+            "variant_validations": {
+                name: {**asdict(value), "status": value.status.value}
+                for name, value in (self.variant_validations or {}).items()
+            },
         }
 
 
@@ -212,6 +260,11 @@ def freeze_policy(raw: Mapping[str, Any] | None) -> Result[ProcessingPolicy]:
             return parsed
         values[key] = parsed.value
 
+    allowed_variants = {item.value for item in VariantName}
+    unknown_variants = [item for item in values["requested_variants"] if item not in allowed_variants]
+    if unknown_variants:
+        return Err(DomainError("value", "policy.requested_variants", f"unsupported variants: {unknown_variants!r}"))
+
     strategy_raw = raw.get("edge_strategy", EdgeStrategy.AUTO_PRINT_SAFE.value)
     try:
         strategy = EdgeStrategy(strategy_raw)
@@ -230,6 +283,16 @@ def freeze_policy(raw: Mapping[str, Any] | None) -> Result[ProcessingPolicy]:
     cell = raw.get("halftone_cell", 8)
     if not isinstance(cell, int) or cell < 2 or cell > 64:
         return Err(DomainError("value", "policy.halftone_cell", "must be an integer in [2, 64]"))
+    canvas_width = raw.get("canvas_width")
+    canvas_height = raw.get("canvas_height")
+    if (canvas_width is None) != (canvas_height is None) or any(value is not None and (not isinstance(value, int) or value < 1 or value > 20000) for value in (canvas_width, canvas_height)):
+        return Err(DomainError("value", "policy.canvas", "width and height must both be integers in [1, 20000]"))
+    canvas_dpi = raw.get("canvas_dpi", 300)
+    canvas_margin = raw.get("canvas_margin", 0)
+    if not isinstance(canvas_dpi, int) or not 1 <= canvas_dpi <= 2400:
+        return Err(DomainError("value", "policy.canvas_dpi", "must be an integer in [1, 2400]"))
+    if not isinstance(canvas_margin, int) or canvas_margin < 0:
+        return Err(DomainError("value", "policy.canvas_margin", "must be a non-negative integer"))
 
     regions: list[ProtectedRegion] = []
     raw_regions = raw.get("protected_regions", [])
@@ -257,11 +320,15 @@ def freeze_policy(raw: Mapping[str, Any] | None) -> Result[ProcessingPolicy]:
         must_keep=values["must_keep"],
         keep_if_intentional=values["keep_if_intentional"],
         remove_only=values["remove_only"],
-        target_garments=values["target_garments"] or ProcessingPolicy.target_garments,
+        target_garments=values["target_garments"] or ("black", "white", "navy", "blue_jean"),
         edge_strategy=strategy,
-        requested_variants=values["requested_variants"] or ProcessingPolicy.requested_variants,
+        requested_variants=values["requested_variants"] or ("conservative", "artistic"),
         mode=mode,
         protected_regions=tuple(regions),
         background_tolerance=tolerance,
         halftone_cell=cell,
+        canvas_width=canvas_width,
+        canvas_height=canvas_height,
+        canvas_dpi=canvas_dpi,
+        canvas_margin=canvas_margin,
     ))

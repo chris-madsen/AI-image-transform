@@ -72,3 +72,27 @@ def test_mask_revision_is_immutable_and_chained() -> None:
     assert second.parent_id == first.revision_id
     assert second.mask_sha256 != first.mask_sha256
     assert second.operations == ("manual_restore",)
+
+
+def test_policy_rejects_unknown_variant_and_halftone_cell_changes_screen() -> None:
+    assert isinstance(freeze_policy({"requested_variants": ["../../../escaped"]}), Err)
+    alpha = np.full((32, 32), 128, dtype=np.uint8)
+    assert not np.array_equal(halftone_alpha(alpha, 4), halftone_alpha(alpha, 16))
+
+
+def test_canvas_policy_is_validated_and_preserves_aspect_ratio(tmp_path) -> None:
+    from io import BytesIO
+    from PIL import Image
+    from printify_artwork_cleaner.application import process_image_bytes
+
+    source = np.zeros((8, 16, 4), dtype=np.uint8)
+    source[..., :3] = [200, 20, 20]
+    source[..., 3] = 255
+    stream = BytesIO()
+    Image.fromarray(source, mode="RGBA").save(stream, format="PNG")
+    policy = freeze_policy({"canvas_width": 32, "canvas_height": 32}).value
+    report = process_image_bytes(stream.getvalue(), policy, tmp_path)
+    output = Image.open(tmp_path / "artwork_conservative.png")
+    assert output.size == (32, 32)
+    assert report.inspection.source_sha256
+    assert report.inspection.canonical_pixels_sha256

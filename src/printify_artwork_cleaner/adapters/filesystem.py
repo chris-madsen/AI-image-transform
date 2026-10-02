@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import time
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Lock
@@ -32,6 +33,8 @@ class FileJobStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, job_id: str) -> Path:
+        if not re.fullmatch(r"[0-9a-f]{32}", job_id):
+            raise ValueError("invalid job id")
         return self.root / job_id / "job.json"
 
     def create(self, job_id: str, source_hash: str, idempotency_key: str | None, payload: dict[str, Any]) -> StoredJob:
@@ -42,12 +45,12 @@ class FileJobStore:
             self._write(record)
         return record
 
-    def find_idempotent(self, key: str, source_hash: str) -> StoredJob | None:
+    def find_idempotent(self, key: str, fingerprint: str) -> StoredJob | None:
         for path in self.root.glob("*/job.json"):
             record = self.get(path.parent.name)
             if record and record.idempotency_key == key:
-                if record.source_hash != source_hash:
-                    raise ValueError("idempotency key already belongs to a different source")
+                if record.payload.get("_idempotency_fingerprint") != fingerprint:
+                    raise ValueError("idempotency key already belongs to a different request")
                 return record
         return None
 
@@ -73,6 +76,8 @@ class FileJobStore:
         os.replace(temporary, destination)
 
     def job_dir(self, job_id: str) -> Path:
+        if not re.fullmatch(r"[0-9a-f]{32}", job_id):
+            raise ValueError("invalid job id")
         path = self.root / job_id
         path.mkdir(parents=True, exist_ok=True)
         return path
