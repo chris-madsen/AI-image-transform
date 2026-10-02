@@ -1,35 +1,24 @@
-# Spec Delta
-
-## Purpose
-
-Гарантирует, что alpha-варианты и previews предназначены для печати на светлой и тёмной ткани, а не только для визуального просмотра на checkerboard.
+# Print-safe Rendering
 
 ## ADDED Requirements
 
-### Requirement: Alpha-only rendering
-Система MUST сохранять исходные visible RGB-пиксели и менять RGB только под полностью прозрачными пикселями при canonicalization.
+### Requirement: alpha-only rendering
+The renderer MUST preserve source RGB except for explicit hidden-RGB cleanup.
+Resize MUST use premultiplied alpha.
 
-#### Scenario: Alpha cleanup
-- **WHEN** внешний фон удаляется
-- **THEN** visible RGB совпадает с source, а hidden RGB может быть очищен до канонического значения
+#### Scenario: source preservation
+- **WHEN** a candidate is rendered
+- **THEN** visible source RGB is unchanged and resize uses premultiplied alpha
 
-### Requirement: Premultiplied resize
-Система MUST выполнять resize RGBA через premultiplied alpha.
+### Requirement: variants and previews
+The service MUST support conservative, artistic, binary-alpha, controlled-soft-
+alpha and halftone outputs, plus black, white, gray, navy, blue-jean and DTG
+underbase previews.
 
-#### Scenario: Transparent border resize
-- **WHEN** artwork масштабируется
-- **THEN** вокруг непрозрачных пикселей не появляется синтетический цветной fringe
+#### Scenario: halftone
+- **WHEN** a halftone variant is requested
+- **THEN** its alpha channel contains only `0` and `255`
 
-### Requirement: Dark garment strategy
-Система MUST проверять partial alpha через dark-garment/underbase preview и использовать binary или halftone fallback при обнаружении glow.
-
-#### Scenario: Soft alpha creates glow
-- **WHEN** preview на navy или Blue Jean показывает светлую кайму
-- **THEN** continuous soft candidate не получает `passed`, а создаётся binary/halftone candidate или review request
-
-### Requirement: Deterministic variants
-Одинаковые source, policy и pipeline version MUST производить одинаковые variant pixels.
-
-#### Scenario: Repeated processing
-- **WHEN** один job повторно обрабатывается без изменения входов
-- **THEN** hashes итоговых variants совпадают
+#### Scenario: glow or fringe
+- **WHEN** continuous alpha creates a visible print halo
+- **THEN** validation cannot return `passed`

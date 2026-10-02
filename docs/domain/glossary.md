@@ -1,16 +1,15 @@
 # Ubiquitous Language
 
-| Термин | Канонический смысл |
+| Term | Canonical meaning |
 |---|---|
-| Artwork | Видимая художественная композиция, которую нужно сохранить. |
-| Source | Immutable исходный байтовый файл и его hash. |
-| ProcessingPolicy | Frozen структурированное намерение пользователя. |
-| Protected detail | Область/элемент, который нельзя удалить или ослабить. |
-| External background | Область, связанная с границей canvas и разрешённая к удалению. |
-| Mask revision | Неизменяемая версия alpha/mask с parent и provenance. |
-| Candidate | Конкретный вариант artwork после rendering strategy. |
-| Halo | Нежелательная светлая/цветная кайма на проверочном фоне. |
-| Review required | Результат, который нельзя безопасно принять автоматически. |
-| Artifact bundle | Immutable набор PNG, masks, previews, PSD и report. |
-| Job | Асинхронное выполнение одной frozen source/policy пары. |
-
+| Artwork | Visible artistic composition that must be preserved. |
+| Source | Immutable input bytes and their hash. |
+| ProcessingPolicy | Frozen, structured user intent. |
+| Protected detail | Region or element that must not be removed or weakened. |
+| External background | Edge-connected area explicitly allowed for removal. |
+| Mask revision | Immutable alpha/mask version with parent and provenance. |
+| Candidate | Artwork variant produced by a rendering strategy. |
+| Halo | Unwanted bright or colored fringe on a validation background. |
+| Review required | Result that cannot be accepted safely without review. |
+| Artifact bundle | Immutable PNG, mask, preview, PSD and report set. |
+| Job | Asynchronous execution of one frozen source/policy pair. |

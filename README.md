@@ -1,9 +1,8 @@
 # Printify Artwork Cleaner
 
-Domain-first локальный сервис для очистки artwork перед print production.
-Сервис сохраняет исходный RGB, изменяет только alpha/mask, создаёт print-safe
-варианты, previews, JSON report и editable PSD через Photopea Live API.
-
+Domain-first is a local service for cleaning artwork before printing production.
+The service saves the original RGB, changes only alpha/mask, creates print-safe
+variants, previews, JSON report and editable PSD via Photopea Live API.
 ## Quick start
 
 ```bash
@@ -12,25 +11,21 @@ make test
 openspec validate rebuild-universal-image-processing-skill --type change --strict
 ```
 
-Запуск сервиса:
-
+Service initiation
 ```bash
 make service
 ```
 
-Сервис принимает асинхронные jobs через `POST /v1/jobs`. Полный контракт Skill
-находится в `skill/universal-image-matting/SKILL.md`, API и локальный запуск — в
+The service accepts asynchronous jobs via `post /v1/jobs`. Full Skill contract
+located in `skill/universal-image-matting/SKILL.md`, API and local launch — in
 `docs/deployment/local-service.md`.
-
 ## Photopea PSD export
 
-PSD не создаётся Python-библиотекой. Image service вызывает отдельный
-`PhotopeaLiveApiAdapter`, который передаёт изображения во внешний environment с
-Photopea iframe через Live Messaging API. Photopea возвращает PSD через
+The PSD is not created by the Python library. Image service calls a separate
+`PhotopeaLiveApiAdapter` that transfers images to the external environment with
+Photopea iframe via Live Messaging API. Photopea returns PSD via
 `app.activeDocument.saveToOE("psd:true")`.
-
-Запуск адаптера:
-
+Starting the Adapter
 ```bash
 cd bridge
 npm install
@@ -38,9 +33,8 @@ npx playwright install chromium
 PHOTOPEA_LIVE_API_TOKEN=change-me npm start
 ```
 
-Без доступного Photopea Live adapter job не считается успешно завершённым и
-получает `review_required`.
-
+Without an available Photopea Live adapter job is not considered successfully completed and
+gets` review_required `.
 ## Project structure
 
 - `src/printify_artwork_cleaner/domain/` — pure domain core.
@@ -53,6 +47,6 @@ PHOTOPEA_LIVE_API_TOKEN=change-me npm start
 
 ## Git publication
 
-Скопируйте `.env.example` в локальный `.env`; реальные токены не коммитятся.
-Перед публикацией выполните `make test`, `make bridge-check` и
+Copy `.env.example` to local `.env`; real tokens are not committed.
+Before publishing, perform `make test`, `make bridge-check` and
 `make openspec-validate`.

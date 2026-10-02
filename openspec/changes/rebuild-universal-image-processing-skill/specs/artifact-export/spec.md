@@ -1,35 +1,19 @@
-# Spec Delta
-
-## Purpose
-
-Формирует полный, проверяемый и редактируемый набор результатов для скачивания, ручной проверки и последующей работы в Photopea.
+# Artifact Export
 
 ## ADDED Requirements
 
-### Requirement: Artifact bundle
-Система MUST выдавать PNG, mask, alpha-mask, required previews, JSON report и editable PSD для завершённого job.
+### Requirement: immutable bundle
+The service MUST emit PNG variants, masks, garment previews, DTG preview and
+`report.json` with hashes and validation data.
 
-#### Scenario: Passed bundle
-- **WHEN** candidate получил `passed`
-- **THEN** artifact list содержит имена, media types, byte sizes и sha256 всех обязательных файлов
+#### Scenario: bundle manifest
+- **WHEN** a job reaches artifact packaging
+- **THEN** every emitted file has a hash and appears in the report
 
-### Requirement: Layered PSD
-PSD MUST создаваться через Photopea Live API и содержать source backup, working art, working mask и named test-background layers без потери размера canvas.
+### Requirement: Photopea PSD
+The editable PSD MUST be created through the Photopea Live API adapter and MUST
+contain `SOURCE BACKUP`, `WORKING ART`, `WORKING MASK` and print test layers.
 
-#### Scenario: PSD is opened in editor
-- **WHEN** пользователь открывает PSD в совместимом редакторе
-- **THEN** source, mask и test-background layers доступны отдельно для ручной коррекции
-
-### Requirement: PSD export dependency
-Job MUST NOT получить `passed` с отсутствующим или локально сгенерированным PSD; отсутствие Photopea Live API adapter приводит к `review_required` или `failed`.
-
-#### Scenario: Photopea Live API adapter unavailable
-- **WHEN** PNG и mask готовы, но Photopea Live bridge недоступен
-- **THEN** job не получает `passed` и report содержит явную bridge error
-
-### Requirement: Report provenance
-JSON report MUST содержать source hash, policy, pipeline version, validation decision, changed-pixel statistics, warnings и artifact manifest.
-
-#### Scenario: Audit report
-- **WHEN** пользователь получает bundle
-- **THEN** report позволяет связать каждый artifact с source и конкретной processing revision
+#### Scenario: Photopea unavailable
+- **WHEN** the Photopea Live API adapter is unavailable
+- **THEN** the job MUST NOT become `passed`; it becomes `review_required` or `failed`

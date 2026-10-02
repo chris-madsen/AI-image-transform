@@ -2,43 +2,38 @@
 
 ## Why
 
-Текущий проект является benchmark-скриптами, а не устойчивым продуктом обработки artwork: в нём нет frozen policy, жизненного цикла job, безопасного отказа, review-статусов и единого контракта артефактов. Сейчас нужен новый доменный контур, чтобы ChatGPT Skill мог передавать структурированное намерение локальному сервису, а сервис — детерминированно обрабатывать изображение без перерисовки исходного RGB.
+The previous repository was benchmark-first code, not a product domain model. It
+lacked a frozen policy, job lifecycle, safe refusal states, review status and a
+stable artifact contract. The product needs a domain-first service that accepts
+structured intent from the Skill and processes artwork without regenerating the
+source RGB.
 
 ## What Changes
 
-- **BREAKING**: заменить benchmark-first entrypoint на domain-first pipeline обработки artwork.
-- Добавить frozen `ProcessingPolicy`, inspection отчёт, protected regions и явные статусы `accepted`, `running`, `review_required`, `passed`, `refused`, `failed`.
-- Добавить асинхронный job API для Skill: создание job, polling статуса, список и скачивание артефактов.
-- Реализовать функциональное ядро инспекции, edge-connected mask, alpha rendering, binary/soft/halftone варианты, preview и validation.
-- Запретить генеративную перерисовку, скрытые fallback-модели и перезапись исходника.
-- Создавать PNG, mask, alpha-mask, printer-aware previews и JSON report; layered PSD получать через Photopea Live API.
-- Добавить structured JSON events/logs, correlation/job identifiers и базовые RED/domain metrics.
-- Оставить GPT интерпретатором пользовательского текста на стороне Skill; image service принимает только валидированную structured policy.
-- Сделать Photopea Live bridge обязательным adapter для выдачи `passed` job с PSD; обработка PNG/mask может диагностически завершаться без него только как `review_required`.
-- Исключить из продукта Printify upload, Etsy/store workflow, MCP и управление Photopea мышью.
+- **BREAKING**: replace the benchmark-first entrypoint with a domain-first artwork pipeline.
+- Add frozen `ProcessingPolicy`, inspection, protected regions and explicit job states.
+- Add an asynchronous job API with idempotency, polling and artifact discovery.
+- Implement inspection, edge-connected masking, alpha rendering, previews and validation.
+- Forbid generative redraw, hidden fallbacks and source overwrites.
+- Export PNG, masks, print previews, JSON report and PSD through the Photopea Live API.
+- Add structured events, correlation identifiers and RED/domain metrics.
+- Keep GPT as the user-intent interpreter on the Skill side; the service accepts only validated policy.
+- Use `PhotopeaLiveApiAdapter` for PSD export. Missing Photopea access MUST produce
+  `review_required` or `failed`, never a false `passed` result.
+- Exclude Printify upload, Etsy/store workflows, MCP and mouse automation from the core.
 
 ## Capabilities
 
-### New Capabilities
+- `agent-job-contract`: asynchronous jobs, idempotency, lifecycle and artifact discovery.
+- `artwork-inspection`: source normalization, alpha/RGB inspection and crop-risk detection.
+- `semantic-policy-and-protection`: frozen policy and protected semantic regions.
+- `mask-composition`: mask revisions, edge connectivity and uncertainty.
+- `print-safe-rendering`: alpha-only rendering, premultiplied resize and DTG previews.
+- `review-and-validation`: halo, frame, detail and acceptance checks.
+- `artifact-export`: immutable bundle, report and Photopea-exported layered PSD.
+- `photopea-adapter`: outer environment for Photopea Live Messaging.
 
-- `agent-job-contract`: асинхронный контракт job, idempotency, статусы и artifact discovery для Skill.
-- `artwork-inspection`: нормализация исходника, alpha/RGB inspection, edge classification и crop-risk detection.
-- `semantic-policy-and-protection`: frozen ProcessingPolicy, protected regions и безопасная передача semantic intent.
-- `mask-composition`: построение и версионирование масок с edge connectivity, protected areas и uncertainty.
-- `print-safe-rendering`: alpha-only rendering, premultiplied resize, binary/soft/halftone стратегии и DTG-aware previews.
-- `review-and-validation`: halo/frame/detail checks, acceptance decisions и безопасный отказ.
-- `artifact-export`: immutable artifact bundle, JSON report и layered PSD, экспортированный через Photopea.
-- `photopea-adapter`: outer-environment bridge, Photopea Live Messaging и сохранение PSD/PNG обратно в artifact store.
+## Non-goals
 
-### Modified Capabilities
-
-Нет: существующих capability specs в проекте не было.
-
-## Impact
-
-- Новые доменные модули появятся в `src/printify_artwork_cleaner/`.
-- Появится FastAPI/uvicorn service adapter и локальный filesystem job/artifact store.
-- Появятся Skill instructions и helper script для формирования policy и вызова сервиса.
-- `pyproject.toml` получит runtime-зависимости для HTTP, PSD, multipart и metrics.
-- Текущие benchmark-модули сохраняются как исследовательские fixtures, но не являются доменным API.
-- Named Cloudflare Tunnel и bearer secret остаются deployment-инфраструктурой и не попадают в domain core.
+This change does not add Printify credentials, cloud storage, a hosted queue,
+a Photopea mouse automation workflow or a local Python PSD writer.

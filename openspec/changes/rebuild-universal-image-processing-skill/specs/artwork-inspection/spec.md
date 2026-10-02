@@ -1,32 +1,18 @@
-# Spec Delta
-
-## Purpose
-
-Определяет проверяемое описание исходного artwork до изменения маски, чтобы последующие операции опирались на фактические RGBA-данные и могли безопасно остановиться.
+# Artwork Inspection
 
 ## ADDED Requirements
 
-### Requirement: Source freeze
-Система MUST сохранить исходный байтовый файл и его sha256 до начала обработки.
+### Requirement: source inspection
+The service MUST freeze the source hash, dimensions, color mode, alpha profile,
+hidden RGB statistics and edge-touching classification before mutation.
 
-#### Scenario: Source is preserved
-- **WHEN** job принят
-- **THEN** исходный файл доступен по immutable source reference и его hash записан в report
+#### Scenario: RGBA source
+- **WHEN** a source contains alpha
+- **THEN** the report records dimensions, alpha statistics and source hash
 
-### Requirement: RGBA inspection
-Система MUST определить geometry, mode, наличие alpha, alpha histogram и hidden RGB statistics.
+### Requirement: edge-connected background
+The service MUST distinguish edge-connected background from internal regions.
 
-#### Scenario: Opaque input is inspected
-- **WHEN** загружен JPEG или непрозрачный PNG
-- **THEN** report явно указывает отсутствие исходной прозрачности и не притворяется, что alpha была предоставлена
-
-### Requirement: Edge classification
-Система MUST классифицировать внешний edge-connected фон отдельно от внутренних пикселей и указывать crop risk.
-
-#### Scenario: Flat external background
-- **WHEN** одинаковый фон связан с границами canvas
-- **THEN** inspection помечает его как removable external background и считает его connected area
-
-#### Scenario: Artwork touches canvas boundary
-- **WHEN** значимая область касается границы и фон нельзя надёжно отличить
-- **THEN** inspection выставляет crop risk и требует review вместо безусловного удаления
+#### Scenario: internal same-color detail
+- **WHEN** a light region is enclosed by protected artwork
+- **THEN** it MUST NOT be classified as removable external background

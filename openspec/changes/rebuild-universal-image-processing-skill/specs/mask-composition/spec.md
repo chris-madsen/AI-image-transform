@@ -1,28 +1,19 @@
-# Spec Delta
-
-## Purpose
-
-Определяет построение маски из edge connectivity, source alpha, semantic protection и локальных исправлений без глобального опасного threshold.
+# Mask Composition
 
 ## ADDED Requirements
 
-### Requirement: Connected external background
-Система MUST удалять только фон, связанный с краями canvas, если policy не содержит явного локального разрешения.
+### Requirement: deterministic mask revision
+A mask revision MUST combine edge-connected background, vision mask,
+protected regions, local corrections, holes and uncertainty metadata.
 
-#### Scenario: Similar internal color
-- **WHEN** такой же цвет встречается внутри объекта, но не связан с краем
-- **THEN** внутренний участок остаётся непрозрачным
+#### Scenario: protected detail
+- **WHEN** a candidate mask is composed
+- **THEN** protected pixels cannot become transparent without a review signal
 
-### Requirement: Mask revision
-Каждое изменение маски MUST создаваться как новая revision и не изменять предыдущую mask.
+### Requirement: immutable revisions
+Every revision MUST retain its parent identifier and provenance. Source RGB MUST
+remain unchanged while alpha is transformed.
 
-#### Scenario: Manual correction
-- **WHEN** reviewer добавляет или вычитает область
-- **THEN** создаётся новая revision с parent reference и audit metadata
-
-### Requirement: Uncertainty handling
-Система MUST сохранять uncertainty/review regions и не выдавать ambiguous candidate как безусловно passed.
-
-#### Scenario: Low-confidence segmentation
-- **WHEN** segmentation confidence ниже policy threshold
-- **THEN** candidate получает `review_required` или `refused`
+#### Scenario: revision provenance
+- **WHEN** a user edits a mask
+- **THEN** a new revision references its parent and preserves the frozen source
