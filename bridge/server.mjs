@@ -14,27 +14,17 @@ function authorized(request) {
 function photopeaScript() {
   return `
     (function () {
-      if (app.documents.length < 3 || app.activeDocument.__cleanerExported) return;
-      var source = app.documents[0];
-      var artwork = app.documents[1];
-      var mask = app.documents[2];
-      source.name = "SOURCE BACKUP";
-      artwork.name = "WORKING ART";
-      mask.name = "WORKING MASK";
-      app.activeDocument = source;
-      try {
-        source.activeLayer.name = "SOURCE BACKUP";
-        artwork.activeLayer.duplicate(source).name = "WORKING ART";
-        mask.activeLayer.duplicate(source).name = "WORKING MASK";
-        ["BLACK", "WHITE", "GRAY", "NAVY", "BLUE JEAN"].forEach(function (name) {
-          var layer = source.artLayers.add();
-          layer.name = name + " (COLOR FILL TEST)";
-        });
-      } catch (error) {
-        app.echoToOE("PHOTOPEA_LAYER_WARNING:" + error.toString());
+      app.documents[0].name = "SOURCE BACKUP";
+      app.documents[1].name = "WORKING ART";
+      app.documents[2].name = "WORKING MASK";
+      app.activeDocument = app.documents[0];
+      var layerNames = ["WORKING ART", "WORKING MASK", "BLACK (COLOR FILL TEST)", "WHITE (COLOR FILL TEST)", "GRAY (COLOR FILL TEST)", "NAVY (COLOR FILL TEST)", "BLUE JEAN (COLOR FILL TEST)"];
+      for (var i = 0; i < layerNames.length; i++) {
+        var name = layerNames[i];
+        var layer = app.activeDocument.artLayers.add();
+        layer.name = name;
       }
-      app.echoToOE("PHOTOPEA_LAYERS_READY");
-      source.saveToOE("psd:true");
+      app.activeDocument.saveToOE("psd:true");
     })();
   `;
 }
@@ -47,13 +37,20 @@ async function exportViaPhotopea(files) {
   const browser = await chromium.launch(launchOptions);
   try {
     const page = await browser.newPage();
+    page.on("console", (message) => console.log(JSON.stringify({ event_type: "PhotopeaConsole", type: message.type(), text: message.text() })));
+    page.on("pageerror", (error) => console.log(JSON.stringify({ event_type: "PhotopeaPageError", message: String(error) })));
+    page.on("requestfailed", (request) => console.log(JSON.stringify({ event_type: "PhotopeaRequestFailed", url: request.url(), error: request.failure()?.errorText })));
     const result = await new Promise(async (resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("photopea export timed out")), 180_000);
+      const exportTimeoutMs = Number(process.env.PHOTOPEA_EXPORT_TIMEOUT_MS || 300_000);
+      const timer = setTimeout(() => reject(new Error("photopea export timed out")), exportTimeoutMs);
       await page.exposeFunction("getPhotopeaFile", (index) => Array.from(files[index].buffer));
       await page.exposeFunction("receivePhotopeaBinary", (values) => {
         clearTimeout(timer);
         resolve(Buffer.from(values));
       });
+      // Photopea needs a real same-origin outer environment. Using about:blank
+      // makes its localStorage access fail before it can emit the ready event.
+      await page.goto(`http://127.0.0.1:${port}/healthz`);
       await page.setContent(`
         <!doctype html><html><body>
           <iframe id="photopea" style="width:1px;height:1px;border:0"
@@ -69,6 +66,7 @@ async function exportViaPhotopea(files) {
             }
             window.addEventListener('message', (event) => {
               if (event.source !== frame.contentWindow) return;
+              if (typeof event.data === 'string') console.log('PHOTOPEA_MESSAGE:' + event.data);
               if (event.data instanceof ArrayBuffer) {
                 window.receivePhotopeaBinary(Array.from(new Uint8Array(event.data)));
                 return;
@@ -87,7 +85,7 @@ async function exportViaPhotopea(files) {
             });
           </script>
         </body></html>
-      `);
+      `, { waitUntil: "domcontentloaded", timeout: 120_000 });
     });
     if (!result.subarray(0, 4).equals(Buffer.from("8BPS"))) {
       throw new Error("Photopea returned a non-PSD payload");
