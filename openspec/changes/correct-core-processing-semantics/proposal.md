@@ -2,30 +2,23 @@
 
 ## Why
 
-The first implementation established service infrastructure but overstated
-semantic safety. Text such as `must_keep: ["eyes", "text"]` does not create a
-pixel protection mask, requested modes and garments do not consistently select
-algorithms, the DTG preview is only a white composite, and artifact paths and
-idempotency are not fully hardened. The Photopea adapter also does not yet
-prove the required editable PSD structure.
+The first implementation made the service appear safer and more complete than
+it was. It could return a valid PSD container with empty working layers and did
+not yet guarantee automatic manual-equivalent perimeter masking or protected
+pixel preservation.
 
 ## What Changes
 
-- Make the AI/agent-to-core boundary explicit with supplied pixel masks and a
-  `ResolvedMaskBundle`.
-- Return `review_required` when semantic text cannot be resolved into pixels.
-- Build an explicit `RenderPlan` from mode, edge strategy, garments, inspection
-  and uncertainty; apply and validate every requested variant independently.
-- Implement honest dark-garment/DTG-underbase approximation and report its limits.
-- Harden paths, job IDs, policy-aware idempotency, manifest validation,
-  upload limits and public authentication.
-- Split stage diagnostics into AI mask, Photopea processing, PSD validation,
-  PNG validation and overall status.
-- Add real golden fixtures with exact expected statuses and protected regions.
-- Make Photopea Live API export create and validate the promised editable PSD
-  structure. A full PSD round-trip remains a blocking acceptance item.
+- Require resolved pixel masks for semantic intent and fail closed without them.
+- Define manual-equivalent external-perimeter cleanup and intact-reference
+  precedence as observable behavior.
+- Make every variant and dark-garment preview independently validated.
+- Require Photopea PSD conformance: real layer pixels, linked mask, real fills,
+  structure evidence and visual proof.
+- Preserve service security, idempotency and explicit stage status.
+- Add approved golden references and requirement-to-evidence traceability.
 
 ## Non-goals
 
-This change does not add a hosted AI model, Printify API credentials, Etsy,
-MCP, GitHub Actions or a local Python PSD writer.
+This change does not add a hosted model, Printify credentials, Etsy, MCP, a
+local Python PSD writer or generative repainting.

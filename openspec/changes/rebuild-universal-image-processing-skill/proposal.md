@@ -2,38 +2,47 @@
 
 ## Why
 
-The previous repository was benchmark-first code, not a product domain model. It
-lacked a frozen policy, job lifecycle, safe refusal states, review status and a
-stable artifact contract. The product needs a domain-first service that accepts
-structured intent from the Skill and processes artwork without regenerating the
-source RGB.
+The product needs a deterministic, domain-first artwork-cleaning service rather
+than benchmark orchestration. A valid PSD container is not a valid print-ready
+result: the system must prove that its alpha mask preserves protected artwork,
+removes only approved external perimeter contamination, and remains editable in
+Photopea.
 
 ## What Changes
 
-- **BREAKING**: replace the benchmark-first entrypoint with a domain-first artwork pipeline.
-- Add frozen `ProcessingPolicy`, inspection, protected regions and explicit job states.
-- Add an asynchronous job API with idempotency, polling and artifact discovery.
-- Implement inspection, edge-connected masking, alpha rendering, previews and validation.
-- Forbid generative redraw, hidden fallbacks and source overwrites.
-- Export PNG, masks, print previews, JSON report and PSD through the Photopea Live API.
-- Add structured events, correlation identifiers and RED/domain metrics.
-- Keep GPT as the user-intent interpreter on the Skill side; the service accepts only validated policy.
-- Use `PhotopeaLiveApiAdapter` for PSD export. Missing Photopea access MUST produce
-  `review_required` or `failed`, never a false `passed` result.
-- Exclude Printify upload, Etsy/store workflows, MCP and mouse automation from the core.
+- **BREAKING**: replace the benchmark-first entrypoint with a domain-first
+  asynchronous artwork-processing service.
+- Freeze structured user intent, source bytes and mask revisions before rendering.
+- Enforce manual-equivalent external-perimeter cleanup: remove only approved
+  edge-connected pixels and give protected reference pixels precedence.
+- Produce PNG variants, previews, report metadata and a semantically editable
+  PSD through Photopea Live API.
+- Require PSD-content, mask-equivalence and dark-garment visual proof before a
+  job can become `passed`.
+- Keep GPT outside the service as an intent interpreter; require pixel masks for
+  semantic protection.
+- Exclude Printify upload, store integrations, MCP, mouse automation and Python
+  PSD writers from the core.
 
 ## Capabilities
 
-- `agent-job-contract`: asynchronous jobs, idempotency, lifecycle and artifact discovery.
-- `artwork-inspection`: source normalization, alpha/RGB inspection and crop-risk detection.
-- `semantic-policy-and-protection`: frozen policy and protected semantic regions.
-- `mask-composition`: mask revisions, edge connectivity and uncertainty.
-- `print-safe-rendering`: alpha-only rendering, premultiplied resize and DTG previews.
-- `review-and-validation`: halo, frame, detail and acceptance checks.
-- `artifact-export`: immutable bundle, report and Photopea-exported layered PSD.
-- `photopea-adapter`: outer environment for Photopea Live Messaging.
+### New Capabilities
 
-## Non-goals
+- `agent-job-contract`: asynchronous jobs, idempotency, lifecycle and artifacts.
+- `artwork-inspection`: immutable source facts and boundary-risk classification.
+- `semantic-policy-and-protection`: frozen intent and pixel-level protection.
+- `mask-composition`: immutable perimeter, protection and correction mask revisions.
+- `print-safe-rendering`: alpha-only variants and garment previews.
+- `review-and-validation`: print, protection and acceptance decisions.
+- `artifact-export`: immutable bundles and evidence reports.
+- `photopea-adapter`: Photopea Live API PSD construction and conformance proof.
 
-This change does not add Printify credentials, cloud storage, a hosted queue,
-a Photopea mouse automation workflow or a local Python PSD writer.
+### Modified Capabilities
+
+- None. Canonical specs will be materialized when this active change is archived.
+
+## Impact
+
+The change affects the FastAPI service, Skill contract, artifact bundle, Photopea
+outer environment, domain model, tests and local deployment documentation. It
+adds no Printify credentials or hosted model dependency.

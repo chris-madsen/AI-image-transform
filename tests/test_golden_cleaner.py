@@ -8,7 +8,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from printify_artwork_cleaner.application import process_image_bytes
-from printify_artwork_cleaner.domain.models import JobStatus, ProcessingPolicy
+from printify_artwork_cleaner.domain.models import JobStatus, ProcessingPolicy, ResolvedMaskBundle
 
 
 def _png(rgba: np.ndarray) -> bytes:
@@ -66,3 +66,48 @@ def test_golden_classes_produce_explicit_safe_decisions(cases, index: int, tmp_p
         assert "semantic_masks" in report.validation.review_regions
     assert report.artifacts
     assert report.inspection.source_sha256
+
+
+def test_manual_perimeter_fixture_matches_approved_alpha_and_preserves_details(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "manual_perimeter"
+    source_path = fixture / "animal_text_vegetation_source.png"
+    source = source_path.read_bytes()
+    removal = np.asarray(Image.open(fixture / "animal_text_vegetation_removal.png").convert("L")) > 0
+    protection = np.asarray(Image.open(fixture / "animal_text_vegetation_protection.png").convert("L")) > 0
+    expected_alpha = np.asarray(Image.open(fixture / "animal_text_vegetation_expected_alpha.png").convert("L"))
+    report = process_image_bytes(
+        source,
+        ProcessingPolicy(requested_variants=("conservative",)),
+        tmp_path,
+        resolved_masks=ResolvedMaskBundle(
+            semantic_protection=protection,
+            removable_background=removal,
+            provenance=("approved-manual-perimeter",),
+            confidence=1.0,
+        ),
+    )
+    output = np.asarray(Image.open(tmp_path / "artwork_conservative.png").convert("RGBA"))
+    assert np.array_equal(output[..., 3], expected_alpha)
+    assert output[77, 64, 3] == 255  # enclosed background-colored detail remains artwork
+    result = report.variant_validations["conservative"]
+    assert result.protected_alpha_loss_pixels == 0
+    assert result.protected_rgb_diff_pixels == 0
+    assert result.unauthorized_alpha_removal_pixels == 0
+
+
+def test_manual_perimeter_fixture_has_distinct_dark_garment_preview(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "manual_perimeter"
+    report = process_image_bytes(
+        (fixture / "animal_text_vegetation_source.png").read_bytes(),
+        ProcessingPolicy(requested_variants=("conservative",)),
+        tmp_path,
+        resolved_masks=ResolvedMaskBundle(
+            removable_background=np.asarray(Image.open(fixture / "animal_text_vegetation_removal.png").convert("L")) > 0,
+            provenance=("approved-manual-perimeter",),
+            confidence=1.0,
+        ),
+    )
+    assert report.artifacts
+    navy = np.asarray(Image.open(tmp_path / "preview_conservative_navy.png"))
+    white = np.asarray(Image.open(tmp_path / "preview_conservative_white.png"))
+    assert not np.array_equal(navy, white)

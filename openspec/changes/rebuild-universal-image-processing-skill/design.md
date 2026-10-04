@@ -2,74 +2,80 @@
 
 ## Context
 
-The product is a local image-processing service invoked by a ChatGPT Skill.
-GPT converts user language into a validated `ProcessingPolicy`; the service
-executes deterministic image operations and returns immutable artifacts.
+The service receives immutable source bytes and a frozen `ProcessingPolicy` from
+a Skill. It must remove only approved external perimeter pixels, preserve the
+visible source artwork, and return a Photopea-editable PSD. See `proposal.md`
+for the product motivation.
 
-## Architecture
+## Goals / Non-Goals
 
-```text
-ChatGPT / GPT
-  -> structured ProcessingPolicy
-Skill adapter
-  -> HTTPS / Named Cloudflare Tunnel
-FastAPI image service
-  -> domain pipeline
-PNG, masks, previews, report
-  -> PhotopeaLiveApiAdapter
-Photopea Live API -> layered PSD
-```
+**Goals:**
 
-The functional core contains domain ADTs and pure image rules. The imperative
-shell owns HTTP, filesystem, clock, job execution and external adapters.
+- Keep the functional core deterministic and free of filesystem, network, time
+  and model calls.
+- Model job lifecycle, mask revisions and acceptance decisions explicitly.
+- Construct and prove a real Photopea document, not a PSD-format placeholder.
+- Preserve protected pixels while allowing reviewed external-background removal.
 
-## Bounded contexts
+**Non-Goals:**
 
-1. **Agent Job** — `ProcessingJob`, idempotency and lifecycle.
-2. **Artwork Inspection** — geometry, alpha profile, edge classification and inspection report.
-3. **Semantic Policy** — frozen policy and protected intent.
-4. **Mask Composition** — AI/vision mask, edge background, protection and revisions.
-5. **Print-safe Rendering** — conservative/artistic alpha variants and previews.
-6. **Review and Validation** — halo, frame, detail, bounds and decision status.
-7. **Artifact Packaging** — immutable files, hashes and JSON report.
-8. **Photopea Integration** — Photopea Live API outer environment and PSD export.
+- Generative reconstruction, Printify upload, hosted queues, a local Python PSD
+  writer, or Photopea mouse automation.
 
-## Pipeline
+## Decisions
 
-```text
-Ingest -> freeze source/policy -> inspect -> compose mask -> render variants
--> generate previews -> validate -> export artifacts -> complete job
-```
+### DDD boundaries and aggregates
 
-A missing or unavailable mandatory Photopea adapter forces `review_required` or
-`failed`. It cannot be hidden by a fallback writer.
+`ProcessingJob` is the aggregate root for one frozen source, policy, requested
+outputs and lifecycle. It owns terminal status and references immutable
+`MaskRevision` and `ArtifactBundle` values. `MaskRevision` is immutable and
+carries parent identity, hashes, provenance, confidence, protection and removal
+pixels. `ArtifactBundle` is immutable after packaging.
 
-## Ports
+The bounded contexts are Agent Job, Artwork Inspection, Semantic Policy,
+Mask Composition, Print-safe Rendering, Review & Validation and Artifact
+Packaging. Photopea is an external system, isolated behind the `PsdExporter`
+port and `PhotopeaLiveApiAdapter` anti-corruption layer; Photopea types and
+browser messaging do not enter the domain core.
 
-- `VisionProvider`
-- `ArtifactStore`
-- `JobStore`
-- `PsdExporter`
-- `PreviewRenderer`
-- `Clock`
-- `PhotopeaLiveApiAdapter`
+### Manual-equivalent perimeter mask
 
-Domain code MUST NOT call filesystem, network, time or model APIs directly.
+The core derives removal only from approved edge-connected pixels. Semantic
+labels never become pixels by inference inside the service. A supplied protected
+reference or protection mask takes precedence over removal. Enclosed regions,
+internal highlights and disconnected artwork remain unchanged unless an explicit
+reviewed mask permits a change.
 
-## Photopea PSD export
+### PSD as a semantic artifact
 
-The service sends candidate PNGs and a mask to an outer browser environment.
-That environment embeds Photopea in an iframe, communicates through Web
-Messaging, runs a layer-building script and requests
-`app.activeDocument.saveToOE("psd:true")`. The returned bytes are stored as the
-PSD artifact. The bridge folder is infrastructure only; the public abstraction
-is `PhotopeaLiveApiAdapter`.
+The Photopea adapter imports source, candidate RGB and final grayscale mask into
+one document. It creates non-empty `SOURCE BACKUP`, `WORKING ART`,
+`WORKING MASK` and independently toggleable garment-fill layers, then links a
+raster layer mask to `WORKING ART`. The adapter proves layer content,
+mask equivalence and rendered dark-garment behavior before returning a passed
+PSD status. `8BPS` is a transport sanity check only.
 
-A local Python PSD writer such as `psd-tools` or `pytoshop` is deliberately not
-used because the required document behavior must be produced by Photopea.
+### Functional core and imperative shell
 
-## Security and operations
+Pure functions freeze policies, inspect pixels, compose masks, render candidates
+and calculate validation facts. Ports handle VisionProvider, JobStore,
+ArtifactStore, PsdExporter, PreviewRenderer and Clock. HTTP, filesystem,
+Photopea browser execution and tunnel configuration remain adapters.
 
-Use bearer authentication, HTTPS through a Named Cloudflare Tunnel, temporary
-local storage and TTL cleanup. No Printify credentials are accepted. Logs are
-structured JSON and must not contain source bytes or bearer tokens.
+## Risks / Trade-offs
+
+- [Low-confidence boundary] → return `review_required`; never expand removal.
+- [Photopea protocol or structure failure] → retain PNG/report evidence but do
+  not return `passed`.
+- [Large PSD latency] → use ArrayBuffer messaging, bounded timeouts and explicit
+  terminal diagnostics rather than a fallback writer.
+- [Semantic ambiguity] → require pixel-level masks from the Skill or approved
+  vision provider.
+
+## Migration Plan
+
+1. Preserve source and existing output artifacts for audit.
+2. Add pixel-mask and PSD-conformance contracts before changing rendering.
+3. Implement the Photopea adapter behind the existing `PsdExporter` port.
+4. Run approved golden and Photopea round-trip fixtures.
+5. Permit `passed` only after all mandatory evidence is available.

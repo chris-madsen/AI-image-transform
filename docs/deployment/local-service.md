@@ -45,8 +45,35 @@ Then configure the image service:
 ```bash
 PHOTOPEA_LIVE_API_URL=http://127.0.0.1:8787 \
 PHOTOPEA_LIVE_API_TOKEN='change-me' \
+PHOTOPEA_LIVE_API_TIMEOUT=300 \
 make service
 ```
 
-Without this bridge the service may preserve diagnostic PNG/mask artifacts,
-but it MUST return `review_required` rather than claiming a completed PSD job.
+For the Photopea outer environment, use the matching millisecond timeout for
+large PSD serialization:
+
+```bash
+PHOTOPEA_EXPORT_TIMEOUT_MS=300000 npm start
+```
+
+The single-source typed Photopea mask session has a separate fail-fast limit:
+
+```bash
+PHOTOPEA_SESSION_TIMEOUT_MS=120000 npm start
+```
+
+Core PNG, mask and preview artifacts are produced before the Photopea adapter
+is scheduled. PSD export runs in a separate background executor and updates the
+same job when it completes; clients can download the core artifacts while PSD
+is pending. The adapter has a hard five-minute timeout. Without a completed
+Photopea export the service MUST return `review_required` rather than claiming
+a completed PSD job.
+
+The current Photopea runtime still has an unresolved polygon-selection
+compatibility issue. Until the same-document checkpoint fixture passes, a
+Photopea mask-session error is explicitly `review_required`/failed; it is never
+silently replaced with generated PNG layers.
+
+The Skill helper does not wait for a pending PSD by default. Pass
+`--wait-for-psd` only when the caller explicitly accepts the external Photopea
+latency.

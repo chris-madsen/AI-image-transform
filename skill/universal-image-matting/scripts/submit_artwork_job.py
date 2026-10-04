@@ -49,6 +49,7 @@ def main() -> int:
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--wait-for-psd", action="store_true", help="Keep polling until the Photopea PSD stage is terminal")
     args = parser.parse_args()
     base = os.environ.get("ARTWORK_SERVICE_URL", "http://127.0.0.1:8000").rstrip("/")
     token = os.environ.get("ARTWORK_SERVICE_TOKEN")
@@ -69,7 +70,9 @@ def main() -> int:
             print(raw.decode("utf-8", errors="replace"), file=sys.stderr)
             return 4
         body = json.loads(raw)
-        if body["status"] in {"passed", "review_required", "refused", "failed"}:
+        report = body.get("report") or {}
+        psd_pending = report.get("psd_export_status") == "pending"
+        if body["status"] in {"passed", "review_required", "refused", "failed"} or (psd_pending and not args.wait_for_psd):
             break
         time.sleep(0.5)
     else:
@@ -91,8 +94,13 @@ def main() -> int:
             print(f"failed to download {artifact['name']}", file=sys.stderr)
             return 4
         (args.out / artifact["name"]).write_bytes(file_bytes)
-    print(json.dumps({"job_id": job_id, "status": terminal, "output": str(args.out)}, ensure_ascii=False))
-    return {"passed": 0, "review_required": 2, "refused": 3}[terminal]
+    print(json.dumps({
+        "job_id": job_id,
+        "status": terminal,
+        "psd_export_status": (body.get("report") or {}).get("psd_export_status", "unknown"),
+        "output": str(args.out),
+    }, ensure_ascii=False))
+    return {"passed": 0, "review_required": 2, "refused": 3, "running": 2}.get(terminal, 4)
 
 
 if __name__ == "__main__":

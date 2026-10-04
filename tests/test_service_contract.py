@@ -53,6 +53,8 @@ def test_async_job_contract_and_artifacts(tmp_path: Path) -> None:
     names = {item["name"] for item in artifacts}
     assert "artwork_editable.psd" in names
     assert "report.json" in names
+    assert terminal["report"]["psd_export_status"] == "unverified"
+    assert terminal["report"]["stage_status"]["psd_validation_status"] == "unverified_payload"
     downloaded = client.get(f"/v1/artifacts/{job_id}/report.json")
     assert downloaded.status_code == 200
 

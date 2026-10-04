@@ -36,8 +36,12 @@ def apply_variant(rgba: np.ndarray, name: str, policy: ProcessingPolicy, plan: R
     selected_plan = plan or build_render_plan(policy, (name,))
     if name == VariantName.CONSERVATIVE.value:
         rendered_alpha = alpha
-    elif name in {VariantName.ARTISTIC.value, VariantName.BINARY_ALPHA.value}:
-        rendered_alpha = binary_alpha(alpha, 32 if name == VariantName.ARTISTIC.value else 128)
+    elif name == VariantName.ARTISTIC.value:
+        # Keep the approved perimeter fade. Binarising it would discard the
+        # visual treatment produced by compose_artistic_perimeter_alpha().
+        rendered_alpha = alpha
+    elif name == VariantName.BINARY_ALPHA.value:
+        rendered_alpha = binary_alpha(alpha, 128)
     elif name == VariantName.HALFTONE.value or selected_plan.edge_strategy is EdgeStrategy.HALFTONE or selected_plan.mode is ProcessingMode.HALFTONE_DARK_GARMENT:
         rendered_alpha = halftone_alpha(alpha, policy.halftone_cell)
     elif name == VariantName.CONTROLLED_SOFT_ALPHA.value or selected_plan.edge_strategy is EdgeStrategy.CONTROLLED_SOFT_ALPHA:

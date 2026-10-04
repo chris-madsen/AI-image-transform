@@ -1,6 +1,14 @@
 # Event Storming
 
-## Domain Story
+## Aggregate boundaries
+
+- **ProcessingJob** is the aggregate root for source identity, frozen policy,
+  terminal status and artifact bundle identity.
+- **MaskRevision** is an immutable value owned or referenced by a job; a new
+  revision never mutates its parent.
+- **ArtifactBundle** is immutable after `ArtifactsPackaged`.
+
+## Domain story
 
 ```text
 SubmitProcessingJob
@@ -8,45 +16,51 @@ SubmitProcessingJob
   → SourceFrozen
   → ArtworkInspected
   → PolicyFrozen
-  → MaskProposed
-  → MaskRevisionCreated
+  → PixelMasksResolved | SemanticResolutionMissing
+  → PerimeterRemovalProposed
+  → MaskRevisionCreated | MaskCompositionRefused
   → CandidateRendered
-  → PreviewGenerated
-  → ValidationCompleted
-  → ReviewRequired | ArtifactsPackaged | JobFailed
+  → GarmentPreviewGenerated
+  → CandidateValidated
+  → PsdExportRequested
+  → PsdExported | PsdExportFailed
+  → PsdStructureValidated | PsdConformanceFailed
+  → ArtifactsPackaged
+  → JobPassed | ReviewRequired | JobRefused | JobFailed
 ```
 
 ## Commands
 
 - `SubmitProcessingJob`
+- `FreezeSource`
+- `FreezePolicy`
 - `InspectArtwork`
-- `ResolvePolicy`
-- `BuildMask`
+- `ResolvePixelMasks`
+- `ProposePerimeterRemoval`
+- `CreateMaskRevision`
 - `RenderCandidate`
+- `GenerateGarmentPreview`
 - `ValidateCandidate`
-- `RequestReview`
+- `RequestPsdExport`
+- `ValidatePsdConformance`
 - `PackageArtifacts`
-- `GetArtifacts`
+- `RequestReview`
+- `RefuseJob`
 
-## Events
+## Policies
 
-- `JobAccepted`
-- `SourceFrozen`
-- `ArtworkInspected`
-- `PolicyFrozen`
-- `MaskProposed`
-- `MaskRevisionCreated`
-- `CandidateRendered`
-- `PreviewGenerated`
-- `ValidationCompleted`
-- `ReviewRequired`
-- `ArtifactsPackaged`
-- `JobFailed`
+- A semantic label without a pixel mask emits `SemanticResolutionMissing` and
+  cannot produce `JobPassed`.
+- Protection pixels take precedence over removal pixels.
+- Only approved edge-connected pixels are removable in default perimeter mode.
+- A candidate can pass only if protected-pixel loss is zero and its required
+  validation previews pass.
+- A job can pass only if PNG validation and PSD conformance both pass.
 
-## Policies and invariants
+## Read models
 
-- Source RGB is authoritative.
-- No candidate with protected-detail loss or halo warning may be `passed`.
-- Missing model/provider produces explicit review/failure, never silent fallback.
-- Every artifact is linked to one job, source hash and pipeline version.
-
+- **Job status**: lifecycle status, warnings, review regions and stage results.
+- **Inspection report**: geometry, alpha profile, edge classification and risk.
+- **Mask evidence**: provenance, hashes, coverage and protected-pixel diff.
+- **Validation report**: per-variant halo/frame/protection results.
+- **Artifact manifest**: immutable paths, hashes and PSD conformance evidence.

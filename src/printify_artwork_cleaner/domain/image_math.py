@@ -82,7 +82,7 @@ def protected_mask(policy: ProcessingPolicy, shape: tuple[int, int]) -> np.ndarr
 def inspect_rgba(rgba: np.ndarray, policy: ProcessingPolicy, source_bytes_sha256: str | None = None) -> tuple[ArtworkInspection, np.ndarray]:
     source = np.asarray(rgba, dtype=np.uint8)
     profile = alpha_profile(source)
-    connected = edge_connected_background_mask(source, policy.background_tolerance)
+    connected = edge_connected_background_mask(source, policy.effective_background_tolerance)
     edge_alpha = source[..., 3][np.logical_or.reduce((
         np.pad(np.ones((1, source.shape[1]), dtype=bool), ((0, source.shape[0] - 1), (0, 0))),
         np.pad(np.ones((1, source.shape[1]), dtype=bool), ((source.shape[0] - 1, 0), (0, 0))),
@@ -118,6 +118,53 @@ def inspect_rgba(rgba: np.ndarray, policy: ProcessingPolicy, source_bytes_sha256
 def compose_alpha(source_alpha: np.ndarray, background: np.ndarray, protected: np.ndarray) -> np.ndarray:
     alpha = np.asarray(source_alpha, dtype=np.uint8).copy()
     alpha[np.asarray(background, dtype=bool) & ~np.asarray(protected, dtype=bool)] = 0
+    return alpha
+
+
+def compose_artistic_perimeter_alpha(
+    rgba: np.ndarray,
+    source_alpha: np.ndarray,
+    removable_background: np.ndarray,
+    protected: np.ndarray,
+    low_distance: int = 4,
+    full_distance: int = 64,
+    band_radius: int = 4,
+) -> np.ndarray:
+    """Preserve an intentional external fade without retaining flat background.
+
+    This is deliberately limited to the approved edge-connected removal mask.
+    Interior pixels and protected details remain untouched. The ramp converts
+    artwork pixels near the known flat background colour into controlled alpha,
+    avoiding both a rectangular cut and a broad uniform glow.
+    """
+    source = np.asarray(rgba, dtype=np.uint8)
+    alpha = np.asarray(source_alpha, dtype=np.uint8).copy()
+    removable = np.asarray(removable_background, dtype=bool) & ~np.asarray(protected, dtype=bool)
+    if not np.any(removable):
+        return alpha
+    # Only soften the perimeter of the approved removal. Applying the colour
+    # ramp to every edge-connected background pixel creates a large translucent
+    # veil when the source contains a broad, slightly tinted backdrop.
+    retained = ~removable
+    near_retained = retained.copy()
+    for _ in range(max(0, int(band_radius))):
+        expanded = near_retained.copy()
+        expanded[1:] |= near_retained[:-1]
+        expanded[:-1] |= near_retained[1:]
+        expanded[:, 1:] |= near_retained[:, :-1]
+        expanded[:, :-1] |= near_retained[:, 1:]
+        near_retained = expanded
+    perimeter = removable & near_retained
+    border = _border_pixels(source[..., :3].astype(np.int16))
+    background_colour = np.median(border, axis=0).astype(np.int16)
+    distance = np.max(np.abs(source[..., :3].astype(np.int16) - background_colour), axis=-1)
+    ramp = np.clip(
+        (distance - int(low_distance)) * 255 // max(1, int(full_distance - low_distance)),
+        0,
+        255,
+    ).astype(np.uint8)
+    alpha[perimeter] = np.minimum(alpha[perimeter], ramp[perimeter])
+    alpha[removable & ~perimeter] = 0
     return alpha
 
 

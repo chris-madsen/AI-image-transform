@@ -10,12 +10,12 @@ import numpy as np
 from PIL import Image
 
 from .adapters.photopea import PhotopeaLiveApiUnavailable
-from .domain.image_math import compose_alpha, inspect_rgba, protected_mask, resize_rgba_premultiplied
+from .domain.image_math import compose_alpha, compose_artistic_perimeter_alpha, inspect_rgba, protected_mask, resize_rgba_premultiplied
 from .domain.models import Artifact, JobStatus, ProcessingMode, ProcessingPolicy, ProcessingReport, ResolvedMaskBundle, StageStatus
 from .domain.rendering import BACKGROUNDS, apply_variant, build_render_plan, checkerboard, composite, dtg_underbase_preview
 from .domain.validation import validate_candidate
 
-PIPELINE_VERSION = "2026.10.02.1"
+PIPELINE_VERSION = "2026.10.03.1"
 
 
 def _save_rgba(rgba: np.ndarray, path: Path, dpi: int = 300) -> None:
@@ -67,22 +67,54 @@ def process_image_bytes(
         removal |= np.asarray(resolved_masks.removable_background, dtype=bool)
     if resolved_masks is not None and resolved_masks.semantic_protection is not None:
         protected |= np.asarray(resolved_masks.semantic_protection, dtype=bool)
-    alpha = compose_alpha(source[..., 3], removal, protected)
-    base = np.dstack((source[..., :3], alpha)).astype(np.uint8)
+    reference = source.copy()
+    if resolved_masks is not None and resolved_masks.protected_reference is not None:
+        protected_reference = np.asarray(resolved_masks.protected_reference, dtype=np.uint8)
+        if protected_reference.shape != source.shape:
+            raise ValueError("protected reference must match source dimensions and RGBA channels")
+        reference[protected, :] = protected_reference[protected, :]
+    alpha = compose_alpha(reference[..., 3], removal, protected)
+    base = np.dstack((reference[..., :3], alpha)).astype(np.uint8)
     base = _apply_canvas(base, policy)
-    validation_source = _apply_canvas(source, policy)
+    tuning = policy.mask_tuning
+    artistic_alpha = compose_artistic_perimeter_alpha(
+        reference,
+        reference[..., 3],
+        removal,
+        protected,
+        low_distance=tuning.fade_low_distance if tuning else 4,
+        full_distance=tuning.fade_full_distance if tuning else 64,
+        band_radius=tuning.fade_band_radius if tuning else 4,
+    )
+    artistic_base = _apply_canvas(np.dstack((reference[..., :3], artistic_alpha)).astype(np.uint8), policy)
+    validation_source = _apply_canvas(reference, policy)
     variants = tuple(dict.fromkeys(policy.requested_variants or ("conservative", "artistic")))
     if policy.mode is ProcessingMode.INSPECT:
         variants = ("conservative",)
     render_plan = build_render_plan(policy, variants)
-    outputs: dict[str, np.ndarray] = {name: apply_variant(base, name, policy, render_plan) for name in variants}
+    outputs: dict[str, np.ndarray] = {
+        name: apply_variant(artistic_base if name == "artistic" else base, name, policy, render_plan)
+        for name in variants
+    }
     validation_protected = _apply_canvas(np.dstack((protected.astype(np.uint8) * 255,) * 3 + (protected.astype(np.uint8) * 255,)), policy)[..., 3] > 0 if policy.canvas_width else protected
-    validations = {name: validate_candidate(output, validation_source, inspection, policy, validation_protected) for name, output in outputs.items()}
-    chosen_name = "conservative" if "conservative" in outputs else variants[0]
+    allowed_removal = _apply_canvas(np.dstack((removal.astype(np.uint8) * 255,) * 4), policy)[..., 3] > 0 if policy.canvas_width else removal
+    validations = {name: validate_candidate(output, validation_source, inspection, policy, validation_protected, allowed_removal) for name, output in outputs.items()}
+    visual_quality = policy.visual_quality
+    artistic_is_preferred = (
+        "artistic" in outputs
+        and visual_quality is not None
+        and visual_quality.edge_naturalness >= 0.8
+        and visual_quality.intentional_detail_score >= 0.8
+    )
+    chosen_name = "artistic" if artistic_is_preferred else ("conservative" if "conservative" in outputs else variants[0])
     chosen = outputs[chosen_name]
     validation = validations[chosen_name]
     if semantic_mask_missing:
         validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "semantic_policy_has_no_pixel_masks"), review_regions=(*validation.review_regions, "semantic_masks"))
+    if policy.mask_tuning is None:
+        validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "vision_mask_tuning_missing"), review_regions=(*validation.review_regions, "vision_mask_tuning"))
+    elif policy.mask_tuning.confidence < 0.75:
+        validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "vision_mask_tuning_low_confidence"), review_regions=(*validation.review_regions, "vision_mask_tuning"))
     if policy.mode is ProcessingMode.INSPECT:
         validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "inspect_mode_does_not_process_artwork"), review_regions=(*validation.review_regions, "inspect_mode"))
     failing_variants = tuple(name for name, result in validations.items() if result.status is not JobStatus.PASSED)
@@ -118,10 +150,16 @@ def process_image_bytes(
     if psd_exporter is not None:
         psd_path = output_dir / "artwork_editable.psd"
         try:
-            psd_path.write_bytes(psd_exporter.export(validation_source, chosen, chosen[..., 3]))
+            if getattr(psd_exporter, "supports_photopea_session", False):
+                if policy.photopea_mask_plan is None:
+                    raise PhotopeaLiveApiUnavailable("photopea_mask_plan is required for Photopea-authored masks")
+                export_kwargs = {"mask_plan": asdict(policy.photopea_mask_plan)}
+            else:
+                export_kwargs = {"variants": outputs} if getattr(psd_exporter, "supports_variants", False) else {}
+            psd_path.write_bytes(psd_exporter.export(validation_source, chosen, chosen[..., 3], **export_kwargs))
             artifacts.append(_write_artifact(psd_path, psd_path.name, "image/vnd.adobe.photoshop"))
             photopea_status = "passed"
-            psd_status = "unverified_payload"
+            psd_status = "passed" if getattr(psd_exporter, "round_trip_verified", False) else "unverified_payload"
         except PhotopeaLiveApiUnavailable as exc:
             bridge_warning = f"photopea_live_api_unavailable: {exc}"
             photopea_status = "failed"
@@ -133,8 +171,13 @@ def process_image_bytes(
         validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, bridge_warning), review_regions=(*validation.review_regions, "photopea_live_api"))
     if psd_status != "passed":
         validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "psd_structure_unverified"), review_regions=(*validation.review_regions, "psd_validation"))
+    ai_mask_status = (
+        "review_required"
+        if semantic_mask_missing
+        else ("provided" if resolved_masks else ("review_required" if policy.mask_tuning is None else "vision_decision_only"))
+    )
     stage = StageStatus(
-        ai_mask_status="review_required" if semantic_mask_missing else ("provided" if resolved_masks else "deterministic_only"),
+        ai_mask_status=ai_mask_status,
         photopea_processing_status=photopea_status,
         psd_validation_status=psd_status,
         png_validation_status="passed" if not failing_variants else "review_required",

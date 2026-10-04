@@ -2,17 +2,23 @@
 
 ## ADDED Requirements
 
-### Requirement: Photopea export
-`PhotopeaLiveApiAdapter` MUST send source artwork and mask data to a Photopea
-Live API outer environment and accept only a returned PSD payload.
+### Requirement: Photopea document construction
+The adapter MUST transfer source, the artistic `RESTORED` candidate, the
+conservative `WITH GAPS` candidate, both final masks and construct one document
+with separate editable artwork layers and real preview layers.
 
-#### Scenario: valid PSD
-- **WHEN** Photopea returns bytes beginning with `8BPS`
-- **THEN** the adapter stores them as the editable PSD artifact
+#### Scenario: valid editable PSD
+- **WHEN** Photopea returns a PSD
+- **THEN** the adapter verifies non-empty `RESTORED` and `WITH GAPS` pixel
+  layers and linked masks whose pixels equal their candidate alpha masks
 
-#### Scenario: invalid response
-- **WHEN** the response is unavailable or is not a PSD
-- **THEN** the adapter returns an explicit error and the job is not `passed`
+### Requirement: visual conformance
+The adapter MUST validate the returned PSD by reopening or inspecting it and by
+rendering its artwork over black, navy and blue-jean preview backgrounds.
+
+#### Scenario: dark-garment proof
+- **WHEN** the dark-garment preview contains an unapproved halo or lacks artwork
+- **THEN** PSD conformance fails and the job is not `passed`
 
 ### Requirement: no local PSD writer
 The product MUST NOT create the production PSD using Python PSD libraries.

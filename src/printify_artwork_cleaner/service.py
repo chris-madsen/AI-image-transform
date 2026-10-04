@@ -6,6 +6,7 @@ import os
 import time
 import hashlib
 import re
+from dataclasses import asdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Annotated, Any
@@ -19,7 +20,7 @@ import io
 import numpy as np
 
 from .adapters.filesystem import FileJobStore, sha256_bytes
-from .adapters.photopea import PhotopeaLiveApiAdapter
+from .adapters.photopea import PhotopeaLiveApiAdapter, PhotopeaLiveApiUnavailable
 from .application import process_image_bytes
 from .domain.models import Err, JobStatus, ResolvedMaskBundle, freeze_policy
 
@@ -48,15 +49,19 @@ def _decode_resolved_masks(payloads: dict[str, bytes]) -> ResolvedMaskBundle:
     shapes: set[tuple[int, int]] = set()
     for key, payload in payloads.items():
         with Image.open(io.BytesIO(payload)) as image:
-            mask = np.asarray(image.convert("L"), dtype=np.uint8) > 0
+            if key == "protected_reference":
+                mask = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+            else:
+                mask = np.asarray(image.convert("L"), dtype=np.uint8) > 0
         decoded[key] = mask
-        shapes.add(mask.shape)
+        shapes.add(mask.shape[:2])
     if len(shapes) > 1:
         raise ValueError("resolved masks must have identical dimensions")
     return ResolvedMaskBundle(
         semantic_protection=decoded.get("semantic_protection"),
         removable_background=decoded.get("removable_background"),
         uncertainty=decoded.get("uncertainty"),
+        protected_reference=decoded.get("protected_reference"),
         provenance=("multipart-mask",),
         confidence=1.0,
     )
@@ -67,8 +72,10 @@ class ServiceRuntime:
         self.store = FileJobStore(root)
         self.token = token
         photopea_url = os.getenv("PHOTOPEA_LIVE_API_URL")
-        self.psd_exporter = psd_exporter or (PhotopeaLiveApiAdapter(photopea_url, os.getenv("PHOTOPEA_LIVE_API_TOKEN")) if photopea_url else None)
+        photopea_timeout = float(os.getenv("PHOTOPEA_LIVE_API_TIMEOUT", "300"))
+        self.psd_exporter = psd_exporter or (PhotopeaLiveApiAdapter(photopea_url, os.getenv("PHOTOPEA_LIVE_API_TOKEN"), timeout=photopea_timeout) if photopea_url else None)
         self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="artwork-job")
+        self.psd_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="photopea-psd")
 
     def submit(self, source: bytes, policy_payload: dict[str, Any], manifest: dict[str, Any], idempotency_key: str | None, mask_payloads: dict[str, bytes] | None = None) -> dict[str, Any]:
         source_hash = sha256_bytes(source)
@@ -104,13 +111,25 @@ class ServiceRuntime:
                 return
             output_dir = self.store.job_dir(job_id) / "artifacts"
             resolved_masks = _decode_resolved_masks(mask_payloads) if mask_payloads else None
-            report = process_image_bytes(source, parsed.value, output_dir, psd_exporter=self.psd_exporter, resolved_masks=resolved_masks)
-            self.store.update(job_id, status=report.status.value, progress=100, payload={"report": report.as_dict(), "policy": payload})
-            JOBS_TOTAL.labels(status=report.status.value).inc()
-            VALIDATION_TOTAL.labels(decision=report.status.value).inc()
+            # PNG/mask/preview generation is the bounded core job. Photopea
+            # is an external, slow adapter and must never block this stage.
+            report = process_image_bytes(source, parsed.value, output_dir, psd_exporter=None, resolved_masks=resolved_masks)
+            report_payload = report.as_dict()
+            report_payload["psd_export_status"] = "pending" if self.psd_exporter else "not_configured"
+            self.store.update(
+                job_id,
+                status=JobStatus.RUNNING.value if self.psd_exporter else report.status.value,
+                progress=85 if self.psd_exporter else 100,
+                payload={"report": report_payload, "policy": payload},
+            )
+            if self.psd_exporter:
+                self.psd_executor.submit(self._run_deferred_psd, job_id, source, output_dir, report_payload, parsed.value)
+            else:
+                JOBS_TOTAL.labels(status=report.status.value).inc()
+                VALIDATION_TOTAL.labels(decision=report.status.value).inc()
             for artifact in report.artifacts:
                 ARTIFACTS_TOTAL.labels(media_type=artifact.media_type).inc()
-            _event("ValidationCompleted", job_id=job_id, status=report.status.value)
+            _event("CoreArtifactsReady", job_id=job_id, status=report.status.value, psd_status=report_payload["psd_export_status"])
         except Exception as exc:  # imperative shell boundary: unexpected bugs become explicit failed jobs
             self.store.update(job_id, status=JobStatus.FAILED.value, progress=100, error={"code": "processing_failed", "path": "job", "message": str(exc)})
             JOBS_TOTAL.labels(status="failed").inc()
@@ -118,6 +137,78 @@ class ServiceRuntime:
         finally:
             QUEUE_DEPTH.dec()
             JOB_DURATION.observe(time.perf_counter() - started)
+
+    def _run_deferred_psd(self, job_id: str, source: bytes, output_dir: Path, report_payload: dict[str, Any], policy) -> None:
+        """Export PSD outside the bounded core job and publish an immutable update."""
+        try:
+            source_rgba = np.asarray(Image.open(io.BytesIO(source)).convert("RGBA"), dtype=np.uint8)
+            if getattr(self.psd_exporter, "supports_photopea_session", False):
+                if policy.photopea_mask_plan is None:
+                    raise PhotopeaLiveApiUnavailable("photopea_mask_plan is required for Photopea-authored masks")
+                export_kwargs = {"mask_plan": asdict(policy.photopea_mask_plan)}
+                # The Photopea session opens the frozen source and authors the
+                # masks in that same document. Do not decode generated PNG
+                # candidates or send them as hidden PSD inputs.
+                chosen = source_rgba
+                mask = source_rgba[..., 3]
+            else:
+                variants = tuple(report_payload.get("variants") or ("conservative", "artistic"))
+                arrays = {
+                    name: np.asarray(Image.open(output_dir / f"artwork_{name}.png").convert("RGBA"), dtype=np.uint8)
+                    for name in variants
+                }
+                chosen_name = "artistic" if "artistic" in arrays else variants[0]
+                chosen = arrays[chosen_name]
+                mask = np.asarray(Image.open(output_dir / f"mask_{chosen_name}.png").convert("L"), dtype=np.uint8)
+                export_kwargs = {"variants": arrays} if getattr(self.psd_exporter, "supports_variants", False) else {}
+            psd_path = output_dir / "artwork_editable.psd"
+            psd_path.write_bytes(self.psd_exporter.export(source_rgba, chosen, mask, **export_kwargs))
+            artifact = {
+                "artifact_id": psd_path.name,
+                "name": psd_path.name,
+                "media_type": "image/vnd.adobe.photoshop",
+                "size_bytes": psd_path.stat().st_size,
+                "sha256": sha256_bytes(psd_path.read_bytes()),
+            }
+            verified = bool(getattr(self.psd_exporter, "round_trip_verified", False))
+            self._publish_psd_result(job_id, report_payload, artifact, verified=verified)
+            _event("PhotopeaExportCompleted", job_id=job_id, verified=verified)
+        except Exception as exc:  # adapter failure is explicit; core artifacts remain available
+            self._publish_psd_result(job_id, report_payload, None, error=str(exc))
+            _event("PhotopeaExportFailed", job_id=job_id, error_type=type(exc).__name__)
+
+    def _publish_psd_result(self, job_id: str, report_payload: dict[str, Any], artifact: dict[str, Any] | None, *, verified: bool = False, error: str | None = None) -> None:
+        updated = json.loads(json.dumps(report_payload))
+        validation = updated["validation"]
+        stage = updated["stage_status"]
+        warnings = [item for item in validation["warnings"] if item not in {"photopea_live_api_not_configured", "psd_structure_unverified"}]
+        review_regions = [item for item in validation["review_regions"] if item not in {"photopea_live_api", "psd_validation"}]
+        if artifact is not None:
+            updated["artifacts"].append(artifact)
+            stage["photopea_processing_status"] = "passed"
+            stage["psd_validation_status"] = "passed" if verified else "unverified_payload"
+            if not verified:
+                warnings.append("psd_structure_unverified")
+                review_regions.append("psd_validation")
+        else:
+            stage["photopea_processing_status"] = "failed"
+            stage["psd_validation_status"] = "failed"
+            warnings.append(f"photopea_live_api_failed:{error or 'unknown error'}")
+            review_regions.append("photopea_live_api")
+        validation["warnings"] = list(dict.fromkeys(warnings))
+        validation["review_regions"] = list(dict.fromkeys(review_regions))
+        if validation["review_regions"] or not verified:
+            updated["status"] = JobStatus.REVIEW_REQUIRED.value
+            stage["overall_status"] = JobStatus.REVIEW_REQUIRED.value
+        updated["stage_status"] = stage
+        updated["psd_export_status"] = "verified" if verified else ("failed" if artifact is None else "unverified")
+        report_path = self.store.job_dir(job_id) / "artifacts" / "report.json"
+        report_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self.store.update(job_id, status=updated["status"], progress=100, payload={"report": updated, "policy": self.store.get(job_id).payload.get("policy", {})})
+        JOBS_TOTAL.labels(status=updated["status"]).inc()
+        VALIDATION_TOTAL.labels(decision=updated["status"]).inc()
+        if artifact:
+            ARTIFACTS_TOTAL.labels(media_type=artifact["media_type"]).inc()
 
     def status(self, job_id: str) -> dict[str, Any]:
         if not _valid_job_id(job_id):
@@ -186,6 +277,7 @@ def create_app(root: Path | None = None, token: str | None = None, psd_exporter=
         semantic_protection_mask: Annotated[UploadFile | None, File()] = None,
         removal_mask: Annotated[UploadFile | None, File()] = None,
         uncertainty_mask: Annotated[UploadFile | None, File()] = None,
+        protected_reference: Annotated[UploadFile | None, File()] = None,
     ) -> JSONResponse:
         max_bytes = int(os.getenv("MAX_SOURCE_BYTES", str(100 * 1024 * 1024)))
         chunks: list[bytes] = []
@@ -197,7 +289,7 @@ def create_app(root: Path | None = None, token: str | None = None, psd_exporter=
             chunks.append(chunk)
         raw = b"".join(chunks)
         mask_payloads: dict[str, bytes] = {}
-        for key, upload in (("semantic_protection", semantic_protection_mask), ("removable_background", removal_mask), ("uncertainty", uncertainty_mask)):
+        for key, upload in (("semantic_protection", semantic_protection_mask), ("removable_background", removal_mask), ("uncertainty", uncertainty_mask), ("protected_reference", protected_reference)):
             if upload is not None:
                 data = await upload.read(max_bytes + 1)
                 if len(data) > max_bytes:

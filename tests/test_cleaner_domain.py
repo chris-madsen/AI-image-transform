@@ -5,6 +5,7 @@ import numpy as np
 from printify_artwork_cleaner.domain.image_math import (
     binary_alpha,
     compose_alpha,
+    compose_artistic_perimeter_alpha,
     edge_connected_background_mask,
     halftone_alpha,
     inspect_rgba,
@@ -13,6 +14,8 @@ from printify_artwork_cleaner.domain.image_math import (
 )
 from printify_artwork_cleaner.domain.mask import create_mask_revision
 from printify_artwork_cleaner.domain.models import EdgeStrategy, Err, ProcessingPolicy, freeze_policy
+from printify_artwork_cleaner.domain.rendering import apply_variant
+from printify_artwork_cleaner.domain.validation import _halo_score
 
 
 def test_policy_freeze_rejects_bad_enum_and_keeps_immutable_tuples() -> None:
@@ -22,6 +25,77 @@ def test_policy_freeze_rejects_bad_enum_and_keeps_immutable_tuples() -> None:
     assert not isinstance(accepted, Err)
     assert accepted.value.must_keep == ("eyes",)
     assert accepted.value.edge_strategy is EdgeStrategy.AUTO_PRINT_SAFE
+
+
+def test_policy_freezes_visual_quality_assessment() -> None:
+    result = freeze_policy({
+        "visual_quality": {
+            "reference_id": "panther-v1",
+            "overall_score": 0.9,
+            "subject_integrity": 0.95,
+            "intentional_detail_score": 0.88,
+            "edge_naturalness": 0.86,
+            "artifact_free_score": 0.92,
+            "confidence": 0.9,
+        }
+    })
+    assert not isinstance(result, Err)
+    assert result.value.visual_quality is not None
+    assert result.value.visual_quality.reference_id == "panther-v1"
+    assert isinstance(result.value.visual_quality.reviewer_notes, tuple)
+
+
+def test_policy_freezes_per_artwork_mask_tuning() -> None:
+    result = freeze_policy({
+        "mask_tuning": {
+            "decision_id": "source-abc-r2",
+            "background_tolerance": 11,
+            "fade_low_distance": 3,
+            "fade_full_distance": 72,
+            "fade_band_radius": 6,
+            "confidence": 0.87,
+        },
+    })
+    assert not isinstance(result, Err)
+    assert result.value.mask_tuning is not None
+    assert result.value.effective_background_tolerance == 11
+
+
+def test_policy_rejects_invalid_mask_tuning() -> None:
+    result = freeze_policy({"mask_tuning": {"decision_id": "bad", "confidence": 0.5}})
+    assert isinstance(result, Err)
+
+
+def test_policy_freezes_photopea_mask_plan() -> None:
+    result = freeze_policy({
+        "photopea_mask_plan": {
+            "revision_id": "vision-r1",
+            "subject_polygons": [[[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]]],
+            "remove_polygons": [[[0.7, 0.0], [0.8, 0.0], [0.8, 0.2]]],
+            "protect_polygons": [[[0.2, 0.2], [0.3, 0.2], [0.3, 0.3]]],
+            "feather_px": 2,
+            "confidence": 0.91,
+        },
+    })
+    assert not isinstance(result, Err)
+    assert result.value.photopea_mask_plan is not None
+    assert result.value.photopea_mask_plan.revision_id == "vision-r1"
+
+
+def test_policy_rejects_arbitrary_photopea_mask_coordinates() -> None:
+    result = freeze_policy({
+        "photopea_mask_plan": {
+            "revision_id": "bad",
+            "subject_polygons": [[[0, 0], [2, 0], [0, 1]]],
+            "confidence": 1,
+        },
+    })
+    assert isinstance(result, Err)
+
+
+def test_policy_rejects_unbounded_visual_quality_score() -> None:
+    result = freeze_policy({"visual_quality": {"overall_score": 1.2}})
+    assert isinstance(result, Err)
 
 
 def test_edge_connected_background_does_not_remove_internal_same_color() -> None:
@@ -44,6 +118,38 @@ def test_protected_region_survives_background_mask() -> None:
     result = compose_alpha(rgba[..., 3], background, protected_mask(policy, rgba.shape[:2]))
     assert inspection.classification == "ambiguous_boundary_contact"
     assert result[1, 1] == 255
+
+
+def test_artistic_perimeter_preserves_fade_but_not_flat_background() -> None:
+    rgba = np.zeros((8, 8, 4), dtype=np.uint8)
+    rgba[..., :3] = [70, 100, 120]
+    rgba[..., 3] = 255
+    rgba[2:6, 2:6, :3] = [20, 20, 20]
+    rgba[1, 3, :3] = [64, 94, 114]
+    removable = np.ones((8, 8), dtype=bool)
+    removable[2:6, 2:6] = False
+    alpha = compose_artistic_perimeter_alpha(rgba, rgba[..., 3], removable, np.zeros((8, 8), dtype=bool))
+    assert alpha[0, 0] == 0
+    assert 0 < alpha[1, 3] < 255
+    assert alpha[3, 3] == 255
+
+
+def test_artistic_variant_keeps_partial_alpha() -> None:
+    source = np.zeros((2, 2, 4), dtype=np.uint8)
+    source[..., :3] = 120
+    source[..., 3] = np.array([[0, 96], [192, 255]], dtype=np.uint8)
+    policy = ProcessingPolicy(requested_variants=("artistic",))
+
+    rendered = apply_variant(source, "artistic", policy)
+
+    assert rendered[..., 3].tolist() == [[0, 96], [192, 255]]
+
+
+def test_halo_score_is_canvas_area_not_partial_area() -> None:
+    rgba = np.zeros((10, 10, 4), dtype=np.uint8)
+    rgba[:2, :, 3] = 32
+
+    assert _halo_score(rgba) == 0.2
 
 
 def test_resize_and_halftone_are_safe() -> None:
