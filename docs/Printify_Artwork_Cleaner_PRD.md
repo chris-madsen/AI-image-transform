@@ -76,6 +76,7 @@ submitting the next revision.
   "requested_variants": ["conservative", "artistic"],
   "mask_tuning": {
     "decision_id": "vision-review-source-hash-r1",
+    "source_sha256": "<64-hex-source-hash>",
     "background_tolerance": 8,
     "fade_low_distance": 4,
     "fade_full_distance": 64,
@@ -84,6 +85,8 @@ submitting the next revision.
   },
   "visual_quality": {
     "reference_id": "named-golden-or-review-rubric",
+    "source_sha256": "<64-hex-source-hash>",
+    "checkpoint_sha256": "<64-hex-checkpoint-hash>",
     "overall_score": 0.0,
     "subject_integrity": 0.0,
     "intentional_detail_score": 0.0,
@@ -92,12 +95,14 @@ submitting the next revision.
     "confidence": 0.0,
     "reviewer_notes": []
   },
-  "photopea_mask_plan": {
-    "revision_id": "vision-mask-source-hash-r1",
-    "subject_polygons": [[[0.10, 0.10], [0.90, 0.10], [0.90, 0.90], [0.10, 0.90]]],
-    "remove_polygons": [],
-    "protect_polygons": [],
-    "feather_px": 2,
+  "photopea_mask_revision": {
+    "revision_id": "mask-source-hash-r1",
+    "parent_revision_id": null,
+    "source_sha256": "<64-hex-source-hash>",
+    "checkpoint_sha256": "<64-hex-checkpoint-hash>",
+    "base_mask_sha256": "<64-hex-base-mask-hash>",
+    "result_mask_sha256": "<64-hex-result-mask-hash>",
+    "operation": "replace_mask",
     "confidence": 0.92
   }
 }
@@ -108,11 +113,14 @@ The policy is frozen at ingestion. Invalid or ambiguous policy MUST produce
 The visual-quality fields are supplied by GPT/vision at the agent boundary;
 the service does not hallucinate them. Missing assessment, low confidence or a
 low score is a review decision, not permission to export a finished print.
-`photopea_mask_plan` is a frozen, per-artwork vision decision. It contains
-normalized polygon corrections only; it is not JavaScript and it is not a
-pre-rendered mask upload. Each checkpoint correction creates a new
-`revision_id`. If the plan is missing or ambiguous, the PSD stage must fail
-closed or remain `review_required`.
+`photopea_mask_revision` is a frozen, per-artwork vision decision bound to one
+grayscale/alpha mask carrier upload. It is not JavaScript and it is not a
+polygon approximation. `source_sha256`, `checkpoint_sha256`,
+`base_mask_sha256` and `result_mask_sha256` are mandatory provenance bindings;
+stale or cross-artwork revisions are rejected. Each checkpoint correction
+creates a new `revision_id` and `parent_revision_id`. If the revision or mask
+carrier is missing or ambiguous, the PSD stage must fail closed or remain
+`review_required`.
 
 ## 6. Bounded contexts
 
@@ -174,10 +182,25 @@ with `app.activeDocument.saveToOE("psd:true")`.
 
 The adapter constructs one editable document. It is not sufficient to open
 separate documents, rename them, or create empty placeholder layers.
-The intended session is `source → typed mask plan → Photopea checkpoint →
-vision review → typed correction → checkpoint` within the same document. The
-bridge must reject script/runtime errors promptly; it must never silently fall
-back to importing seven generated PNG documents.
+The intended session is `source + raster mask carrier → Photopea checkpoint →
+vision review → hash-bound raster correction → checkpoint` within the same
+document. Polygon plans and arbitrary scripts are rejected. The bridge must
+reject script/runtime errors promptly; it must never silently fall back to
+importing seven generated PNG documents.
+
+The bridge exposes this as an explicit bounded session protocol:
+
+```text
+POST /v1/photopea/sessions
+POST /v1/photopea/sessions/{session_id}/revisions
+POST /v1/photopea/sessions/{session_id}/finalize
+```
+
+The Skill/vision adapter owns the review decision and submits only the next
+grayscale/alpha mask carrier plus a typed revision. The same browser and
+Photopea document remain alive until finalization or the five-minute expiry.
+The final transparent artwork, previews and PSD are emitted from the accepted
+revision; a stale source, checkpoint or parent revision is rejected.
 
 ## 7. Processing pipeline
 
@@ -263,9 +286,9 @@ Photopea document with the following non-placeholder structure:
 - `WORKING MASK`: a grayscale pixel layer containing the exact final alpha mask.
 - Raster layer masks linked to `RESTORED` and `WITH GAPS`; neither candidate is
   flattened into the other.
-- Black, white, gray, navy and blue-jean preview layers containing real color
-  fill data. They MUST be independently toggleable and MUST NOT become part of
-  the artwork pixels.
+- Black, navy and blue-jean preview layers containing editable Solid Color Fill
+  data. They MUST be independently toggleable and MUST NOT become part of the
+  artwork pixels.
 
 The adapter MUST reopen or otherwise structurally inspect the returned PSD and
 render it on a navy/blue-jean preview before it can report PSD validation as
@@ -351,9 +374,11 @@ returned artifact:
    mask described in section 9.
 3. `RESTORED` and `WITH GAPS` remain separate editable pixel layers, and their
    linked masks equal the corresponding candidate alpha masks.
-4. The rendered artwork on black, navy and blue-jean backgrounds has no
+4. The accepted checkpoint and reopened PSD have identical mask, transparent
+   artwork and dark-garment preview pixels within declared render tolerance.
+5. The rendered artwork on black, navy and blue-jean backgrounds has no
    unapproved external halo.
-5. Protected-detail diff checks report zero loss.
+6. Protected-detail diff checks report zero loss.
 
 Failure to prove any item yields `review_required` or `failed`; the service MUST
 not publish a formal PSD-only success.

@@ -92,6 +92,8 @@ class VisualQualityAssessment:
     edge_naturalness: float
     artifact_free_score: float
     confidence: float
+    source_sha256: str = ""
+    checkpoint_sha256: str = ""
     reviewer_notes: tuple[str, ...] = ()
 
 
@@ -109,21 +111,57 @@ class MaskTuning:
     fade_band_radius: int
     confidence: float
     decision_id: str
-
-
-Polygon = tuple[tuple[float, float], ...]
+    source_sha256: str = ""
 
 
 @dataclass(frozen=True, slots=True)
-class PhotopeaMaskPlan:
-    """Typed selection plan executed inside the Photopea document."""
+class RasterMaskRevision:
+    """A pixel mask decision bound to one source/checkpoint revision.
+
+    The mask bytes are transported separately as a grayscale/alpha PNG.  This
+    value carries the immutable provenance required to reject stale or
+    cross-artwork corrections before they reach Photopea.
+    """
 
     revision_id: str
-    subject_polygons: tuple[Polygon, ...]
-    remove_polygons: tuple[Polygon, ...] = ()
-    protect_polygons: tuple[Polygon, ...] = ()
-    feather_px: int = 0
+    parent_revision_id: str | None
+    source_sha256: str
+    checkpoint_sha256: str
+    base_mask_sha256: str
+    result_mask_sha256: str
+    operation: str = "replace_mask"
     confidence: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class PhotopeaCheckpoint:
+    """Immutable checkpoint identity returned by one live Photopea document."""
+
+    revision_id: str
+    artifact_id: str
+    source_sha256: str
+    checkpoint_sha256: str
+    mask_sha256: str
+    artwork_sha256: str
+    preview_sha256: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MaskReviewDecision:
+    """Vision decision; corrections carry pixels through a separate mask port."""
+
+    accepted: bool
+    source_sha256: str
+    checkpoint_sha256: str
+    revision: RasterMaskRevision | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PhotopeaReviewOutcome:
+    status: str
+    checkpoint: PhotopeaCheckpoint
+    revisions: int
+    reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +183,7 @@ class ProcessingPolicy:
     canvas_margin: int = 0
     visual_quality: VisualQualityAssessment | None = None
     mask_tuning: MaskTuning | None = None
-    photopea_mask_plan: PhotopeaMaskPlan | None = None
+    photopea_mask_revision: RasterMaskRevision | None = None
 
     @property
     def effective_background_tolerance(self) -> int:
@@ -251,6 +289,7 @@ class ProcessingReport:
     changed_rgb: bool = False
     stage_status: StageStatus | None = None
     variant_validations: dict[str, ValidationResult] | None = None
+    photopea_revision: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -259,6 +298,7 @@ class ProcessingReport:
             "edge_strategy": self.edge_strategy,
             "variants": list(self.variants),
             "changed_rgb": self.changed_rgb,
+            "photopea_revision": self.photopea_revision,
             "inspection": {
                 "geometry": asdict(self.inspection.geometry),
                 "alpha": asdict(self.inspection.alpha),
@@ -307,34 +347,20 @@ def as_string_tuple(value: Any, path: str) -> Result[tuple[str, ...]]:
     return Ok(tuple(item.strip() for item in value))
 
 
-def _freeze_polygons(value: Any, path: str) -> Result[tuple[Polygon, ...]]:
-    if value is None:
-        return Ok(())
-    if not isinstance(value, list) or len(value) > 128:
-        return Err(DomainError("type", path, "expected at most 128 polygons"))
-    polygons: list[Polygon] = []
-    for polygon_index, raw_polygon in enumerate(value):
-        if not isinstance(raw_polygon, list) or not 3 <= len(raw_polygon) <= 4096:
-            return Err(DomainError("type", f"{path}[{polygon_index}]", "expected 3..4096 points"))
-        points: list[tuple[float, float]] = []
-        for point_index, raw_point in enumerate(raw_polygon):
-            if not isinstance(raw_point, list) or len(raw_point) != 2:
-                return Err(DomainError("type", f"{path}[{polygon_index}][{point_index}]", "expected [x, y]"))
-            try:
-                x, y = float(raw_point[0]), float(raw_point[1])
-            except (TypeError, ValueError):
-                return Err(DomainError("value", f"{path}[{polygon_index}][{point_index}]", "coordinates must be numeric"))
-            if not all(isfinite(value) and 0 <= value <= 1 for value in (x, y)):
-                return Err(DomainError("value", f"{path}[{polygon_index}][{point_index}]", "coordinates must be normalized to [0, 1]"))
-            points.append((x, y))
-        polygons.append(tuple(points))
-    return Ok(tuple(polygons))
+def _hash(value: Any, path: str, *, required: bool = True) -> Result[str | None]:
+    if value is None and not required:
+        return Ok(None)
+    if not isinstance(value, str) or not value.strip() or not __import__("re").fullmatch(r"[0-9a-fA-F]{64}", value.strip()):
+        return Err(DomainError("value", path, "expected a SHA-256 hex digest"))
+    return Ok(value.strip().lower())
 
 
 def freeze_policy(raw: Mapping[str, Any] | None) -> Result[ProcessingPolicy]:
     raw = raw or {}
     if not isinstance(raw, Mapping):
         return Err(DomainError("type", "policy", "expected an object"))
+    if "photopea_mask_plan" in raw:
+        return Err(DomainError("deprecated", "policy.photopea_mask_plan", "polygon plans are unsupported; submit photopea_mask_revision and a raster mask"))
 
     fields = (
         ("must_keep", "policy.must_keep"),
@@ -408,31 +434,44 @@ def freeze_policy(raw: Mapping[str, Any] | None) -> Result[ProcessingPolicy]:
             return Err(DomainError("value", "policy.mask_tuning.fade_band_radius", "must be in [0, 32]"))
         if not decision_id or not isfinite(tuning_values["confidence"]) or not 0 <= tuning_values["confidence"] <= 1:
             return Err(DomainError("value", "policy.mask_tuning", "decision_id and confidence must be valid"))
-        mask_tuning = MaskTuning(decision_id=decision_id, **tuning_values)
+        tuning_source = _hash(raw_tuning.get("source_sha256"), "policy.mask_tuning.source_sha256")
+        if isinstance(tuning_source, Err):
+            return tuning_source
+        mask_tuning = MaskTuning(decision_id=decision_id, source_sha256=tuning_source.value or "", **tuning_values)
 
-    photopea_mask_plan: PhotopeaMaskPlan | None = None
-    raw_plan = raw.get("photopea_mask_plan")
-    if raw_plan is not None:
-        if not isinstance(raw_plan, Mapping):
-            return Err(DomainError("type", "policy.photopea_mask_plan", "expected an object"))
+    photopea_mask_revision: RasterMaskRevision | None = None
+    raw_revision = raw.get("photopea_mask_revision")
+    if raw_revision is not None:
+        if not isinstance(raw_revision, Mapping):
+            return Err(DomainError("type", "policy.photopea_mask_revision", "expected an object"))
+        revision_id = str(raw_revision.get("revision_id", "")).strip()
+        if not revision_id:
+            return Err(DomainError("value", "policy.photopea_mask_revision.revision_id", "must not be empty"))
+        parent = raw_revision.get("parent_revision_id")
+        if parent is not None and (not isinstance(parent, str) or not parent.strip()):
+            return Err(DomainError("value", "policy.photopea_mask_revision.parent_revision_id", "must be a non-empty string or null"))
+        hashes: dict[str, str] = {}
+        for key in ("source_sha256", "checkpoint_sha256", "base_mask_sha256", "result_mask_sha256"):
+            parsed_hash = _hash(raw_revision.get(key), f"policy.photopea_mask_revision.{key}")
+            if isinstance(parsed_hash, Err):
+                return parsed_hash
+            hashes[key] = parsed_hash.value  # type: ignore[assignment]
+        operation = raw_revision.get("operation", "replace_mask")
+        if operation not in {"replace_mask", "apply_patch"}:
+            return Err(DomainError("value", "policy.photopea_mask_revision.operation", "must be replace_mask or apply_patch"))
         try:
-            revision_id = str(raw_plan["revision_id"]).strip()
-            feather_px = int(raw_plan.get("feather_px", 0))
-            confidence = float(raw_plan["confidence"])
+            confidence = float(raw_revision["confidence"])
         except (KeyError, TypeError, ValueError):
-            return Err(DomainError("value", "policy.photopea_mask_plan", "missing or invalid plan fields"))
-        subject = _freeze_polygons(raw_plan.get("subject_polygons"), "policy.photopea_mask_plan.subject_polygons")
-        remove = _freeze_polygons(raw_plan.get("remove_polygons", []), "policy.photopea_mask_plan.remove_polygons")
-        protect = _freeze_polygons(raw_plan.get("protect_polygons", []), "policy.photopea_mask_plan.protect_polygons")
-        if any(isinstance(item, Err) for item in (subject, remove, protect)):
-            return next(item for item in (subject, remove, protect) if isinstance(item, Err))
-        if not revision_id or not subject.value:
-            return Err(DomainError("value", "policy.photopea_mask_plan", "revision_id and subject_polygons are required"))
-        if not 0 <= feather_px <= 256:
-            return Err(DomainError("value", "policy.photopea_mask_plan.feather_px", "must be in [0, 256]"))
+            return Err(DomainError("value", "policy.photopea_mask_revision.confidence", "must be supplied and numeric"))
         if not isfinite(confidence) or not 0 <= confidence <= 1:
-            return Err(DomainError("value", "policy.photopea_mask_plan.confidence", "must be in [0, 1]"))
-        photopea_mask_plan = PhotopeaMaskPlan(revision_id, subject.value, remove.value, protect.value, feather_px, confidence)
+            return Err(DomainError("value", "policy.photopea_mask_revision.confidence", "must be in [0, 1]"))
+        photopea_mask_revision = RasterMaskRevision(
+            revision_id=revision_id,
+            parent_revision_id=parent.strip() if isinstance(parent, str) else None,
+            operation=operation,
+            confidence=confidence,
+            **hashes,
+        )
 
     visual_quality: VisualQualityAssessment | None = None
     raw_quality = raw.get("visual_quality")
@@ -452,7 +491,19 @@ def freeze_policy(raw: Mapping[str, Any] | None) -> Result[ProcessingPolicy]:
         notes = raw_quality.get("reviewer_notes", [])
         if not isinstance(notes, list) or not all(isinstance(item, str) for item in notes):
             return Err(DomainError("type", "policy.visual_quality.reviewer_notes", "expected a list of strings"))
-        visual_quality = VisualQualityAssessment(reference_id=reference_id, reviewer_notes=tuple(notes), **quality_values)
+        quality_source = _hash(raw_quality.get("source_sha256"), "policy.visual_quality.source_sha256")
+        quality_checkpoint = _hash(raw_quality.get("checkpoint_sha256"), "policy.visual_quality.checkpoint_sha256")
+        if isinstance(quality_source, Err):
+            return quality_source
+        if isinstance(quality_checkpoint, Err):
+            return quality_checkpoint
+        visual_quality = VisualQualityAssessment(
+            reference_id=reference_id,
+            source_sha256=quality_source.value or "",
+            checkpoint_sha256=quality_checkpoint.value or "",
+            reviewer_notes=tuple(notes),
+            **quality_values,
+        )
 
     regions: list[ProtectedRegion] = []
     raw_regions = raw.get("protected_regions", [])
@@ -493,5 +544,5 @@ def freeze_policy(raw: Mapping[str, Any] | None) -> Result[ProcessingPolicy]:
         canvas_margin=canvas_margin,
         visual_quality=visual_quality,
         mask_tuning=mask_tuning,
-        photopea_mask_plan=photopea_mask_plan,
+        photopea_mask_revision=photopea_mask_revision,
     ))

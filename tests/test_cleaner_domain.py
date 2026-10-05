@@ -31,6 +31,8 @@ def test_policy_freezes_visual_quality_assessment() -> None:
     result = freeze_policy({
         "visual_quality": {
             "reference_id": "panther-v1",
+            "source_sha256": "a" * 64,
+            "checkpoint_sha256": "b" * 64,
             "overall_score": 0.9,
             "subject_integrity": 0.95,
             "intentional_detail_score": 0.88,
@@ -49,6 +51,7 @@ def test_policy_freezes_per_artwork_mask_tuning() -> None:
     result = freeze_policy({
         "mask_tuning": {
             "decision_id": "source-abc-r2",
+            "source_sha256": "a" * 64,
             "background_tolerance": 11,
             "fade_low_distance": 3,
             "fade_full_distance": 72,
@@ -66,23 +69,26 @@ def test_policy_rejects_invalid_mask_tuning() -> None:
     assert isinstance(result, Err)
 
 
-def test_policy_freezes_photopea_mask_plan() -> None:
+def test_policy_freezes_raster_mask_revision() -> None:
     result = freeze_policy({
-        "photopea_mask_plan": {
+        "photopea_mask_revision": {
             "revision_id": "vision-r1",
-            "subject_polygons": [[[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]]],
-            "remove_polygons": [[[0.7, 0.0], [0.8, 0.0], [0.8, 0.2]]],
-            "protect_polygons": [[[0.2, 0.2], [0.3, 0.2], [0.3, 0.3]]],
-            "feather_px": 2,
+            "parent_revision_id": None,
+            "source_sha256": "a" * 64,
+            "checkpoint_sha256": "b" * 64,
+            "base_mask_sha256": "c" * 64,
+            "result_mask_sha256": "d" * 64,
+            "operation": "replace_mask",
             "confidence": 0.91,
         },
     })
     assert not isinstance(result, Err)
-    assert result.value.photopea_mask_plan is not None
-    assert result.value.photopea_mask_plan.revision_id == "vision-r1"
+    assert result.value.photopea_mask_revision is not None
+    assert result.value.photopea_mask_revision.revision_id == "vision-r1"
+    assert result.value.photopea_mask_revision.result_mask_sha256 == "d" * 64
 
 
-def test_policy_rejects_arbitrary_photopea_mask_coordinates() -> None:
+def test_policy_rejects_legacy_polygon_photopea_plan() -> None:
     result = freeze_policy({
         "photopea_mask_plan": {
             "revision_id": "bad",
@@ -91,6 +97,7 @@ def test_policy_rejects_arbitrary_photopea_mask_coordinates() -> None:
         },
     })
     assert isinstance(result, Err)
+    assert result.error.code == "deprecated"
 
 
 def test_policy_rejects_unbounded_visual_quality_score() -> None:

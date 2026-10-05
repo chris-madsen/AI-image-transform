@@ -55,6 +55,7 @@ def process_image_bytes(
     output_dir: Path,
     psd_exporter=None,
     resolved_masks: ResolvedMaskBundle | None = None,
+    authoritative_mask: np.ndarray | None = None,
 ) -> ProcessingReport:
     with Image.open(__import__("io").BytesIO(source_bytes)) as image:
         source = np.asarray(image.convert("RGBA"), dtype=np.uint8).copy()
@@ -73,15 +74,18 @@ def process_image_bytes(
         if protected_reference.shape != source.shape:
             raise ValueError("protected reference must match source dimensions and RGBA channels")
         reference[protected, :] = protected_reference[protected, :]
-    alpha = compose_alpha(reference[..., 3], removal, protected)
+    if authoritative_mask is not None:
+        authoritative = np.asarray(authoritative_mask, dtype=np.uint8)
+        if authoritative.shape != source.shape[:2]:
+            raise ValueError("authoritative raster mask must match source dimensions")
+        alpha = authoritative.copy()
+    else:
+        alpha = compose_alpha(reference[..., 3], removal, protected)
     base = np.dstack((reference[..., :3], alpha)).astype(np.uint8)
     base = _apply_canvas(base, policy)
     tuning = policy.mask_tuning
-    artistic_alpha = compose_artistic_perimeter_alpha(
-        reference,
-        reference[..., 3],
-        removal,
-        protected,
+    artistic_alpha = authoritative.copy() if authoritative_mask is not None else compose_artistic_perimeter_alpha(
+        reference, reference[..., 3], removal, protected,
         low_distance=tuning.fade_low_distance if tuning else 4,
         full_distance=tuning.fade_full_distance if tuning else 64,
         band_radius=tuning.fade_band_radius if tuning else 4,
@@ -115,6 +119,10 @@ def process_image_bytes(
         validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "vision_mask_tuning_missing"), review_regions=(*validation.review_regions, "vision_mask_tuning"))
     elif policy.mask_tuning.confidence < 0.75:
         validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "vision_mask_tuning_low_confidence"), review_regions=(*validation.review_regions, "vision_mask_tuning"))
+    elif policy.mask_tuning.source_sha256 and policy.mask_tuning.source_sha256 != inspection.source_sha256:
+        validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "vision_mask_tuning_source_mismatch"), review_regions=(*validation.review_regions, "vision_mask_tuning"))
+    if policy.visual_quality is not None and policy.visual_quality.source_sha256 and policy.visual_quality.source_sha256 != inspection.source_sha256:
+        validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "visual_quality_source_mismatch"), review_regions=(*validation.review_regions, "visual_quality"))
     if policy.mode is ProcessingMode.INSPECT:
         validation = replace(validation, status=JobStatus.REVIEW_REQUIRED, warnings=(*validation.warnings, "inspect_mode_does_not_process_artwork"), review_regions=(*validation.review_regions, "inspect_mode"))
     failing_variants = tuple(name for name, result in validations.items() if result.status is not JobStatus.PASSED)
@@ -151,15 +159,20 @@ def process_image_bytes(
         psd_path = output_dir / "artwork_editable.psd"
         try:
             if getattr(psd_exporter, "supports_photopea_session", False):
-                if policy.photopea_mask_plan is None:
-                    raise PhotopeaLiveApiUnavailable("photopea_mask_plan is required for Photopea-authored masks")
-                export_kwargs = {"mask_plan": asdict(policy.photopea_mask_plan)}
+                if policy.photopea_mask_revision is None:
+                    raise PhotopeaLiveApiUnavailable("photopea_mask_revision is required for Photopea-authored masks")
+                if policy.photopea_mask_revision.source_sha256 != inspection.source_sha256:
+                    raise PhotopeaLiveApiUnavailable("raster revision source_sha256 does not match frozen source bytes")
+                if hashlib.sha256(chosen[..., 3].tobytes()).hexdigest() != policy.photopea_mask_revision.result_mask_sha256:
+                    raise PhotopeaLiveApiUnavailable("raster revision result_mask_sha256 does not match accepted candidate")
+                export_kwargs = {"mask_revision": asdict(policy.photopea_mask_revision)}
             else:
                 export_kwargs = {"variants": outputs} if getattr(psd_exporter, "supports_variants", False) else {}
             psd_path.write_bytes(psd_exporter.export(validation_source, chosen, chosen[..., 3], **export_kwargs))
             artifacts.append(_write_artifact(psd_path, psd_path.name, "image/vnd.adobe.photoshop"))
             photopea_status = "passed"
-            psd_status = "passed" if getattr(psd_exporter, "round_trip_verified", False) else "unverified_payload"
+            has_pixel_evidence = getattr(psd_exporter, "round_trip_verified", False) and getattr(psd_exporter, "evidence", None) is not None
+            psd_status = "passed" if has_pixel_evidence else "unverified_payload"
         except PhotopeaLiveApiUnavailable as exc:
             bridge_warning = f"photopea_live_api_unavailable: {exc}"
             photopea_status = "failed"
@@ -194,6 +207,7 @@ def process_image_bytes(
         changed_rgb=validation.changed_pixels > 0,
         stage_status=stage,
         variant_validations=validations,
+        photopea_revision=asdict(policy.photopea_mask_revision) if policy.photopea_mask_revision else None,
     )
     report_path = output_dir / "report.json"
     report_path.write_text(json.dumps({"policy": asdict(policy), **report.as_dict()}, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")

@@ -56,6 +56,7 @@ def test_unverified_psd_payload_cannot_pass(tmp_path) -> None:
 def test_photopea_round_trip_capability_marks_exact_payload_verified(tmp_path) -> None:
     class VerifiedPhotopea:
         round_trip_verified = True
+        evidence = object()
 
         def export(self, source, artwork, mask) -> bytes:
             return b"8BPS" + b"round-tripped-payload"
@@ -65,6 +66,20 @@ def test_photopea_round_trip_capability_marks_exact_payload_verified(tmp_path) -
     report = process_image_bytes(stream.getvalue(), ProcessingPolicy(), tmp_path, psd_exporter=VerifiedPhotopea())
     assert report.stage_status is not None
     assert report.stage_status.psd_validation_status == "passed"
+
+
+def test_photopea_header_without_evidence_cannot_pass(tmp_path) -> None:
+    class HeaderOnlyPhotopea:
+        round_trip_verified = True
+
+        def export(self, source, artwork, mask) -> bytes:
+            return b"8BPS" + b"payload"
+
+    stream = BytesIO()
+    Image.fromarray(np.full((8, 8, 4), [100, 120, 140, 255], dtype=np.uint8), mode="RGBA").save(stream, format="PNG")
+    report = process_image_bytes(stream.getvalue(), ProcessingPolicy(), tmp_path, psd_exporter=HeaderOnlyPhotopea())
+    assert report.stage_status is not None
+    assert report.stage_status.psd_validation_status == "unverified_payload"
 
 
 def test_missing_photopea_live_api_is_review_required(tmp_path) -> None:
@@ -129,6 +144,19 @@ def test_supplied_pixel_protection_survives_removal(tmp_path) -> None:
     assert np.all(output[3:5, 3:5, 3] == 255)
     assert report.stage_status is not None
     assert report.stage_status.ai_mask_status == "provided"
+
+
+def test_authoritative_raster_mask_is_used_for_every_emitted_variant(tmp_path) -> None:
+    source = np.full((8, 8, 4), [100, 120, 140, 255], dtype=np.uint8)
+    stream = BytesIO()
+    Image.fromarray(source, mode="RGBA").save(stream, format="PNG")
+    accepted = np.zeros((8, 8), dtype=np.uint8)
+    accepted[2:6, 2:6] = 173
+    report = process_image_bytes(stream.getvalue(), ProcessingPolicy(), tmp_path, authoritative_mask=accepted)
+    for name in ("conservative", "artistic"):
+        output = np.asarray(Image.open(tmp_path / f"artwork_{name}.png"))
+        assert np.array_equal(output[..., 3], accepted)
+    assert report.status is JobStatus.REVIEW_REQUIRED
 
 
 def test_intact_reference_wins_and_reports_zero_protected_diffs(tmp_path) -> None:

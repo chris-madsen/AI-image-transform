@@ -15,9 +15,10 @@ as proof of editable structure.
 | Protected eyes/text/vegetation/internal hole | Manual-perimeter fixture and golden test | Verified |
 | Dark-garment preview distinction | `test_manual_perimeter_fixture_has_distinct_dark_garment_preview`, DTG tests | Verified |
 | Async job, authentication, idempotency and path safety | Existing service contract suite, 32 passing tests | Verified |
-| Real Photopea source/art/mask layer transfer | `bridge/server.mjs`, typed one-source session path; legacy 32x32 fixture has non-empty named layers and no `Layer 1` | Partial; current Photopea polygon action fails fast and no full-resolution PSD is claimed |
-| Linked Photopea raster mask | Canonical Action Manager sequence in the bridge; session path requires a verified polygon selection before mask creation | Partial; current runtime rejects the polygon action |
-| Real garment-fill layers in a passed PSD | Five filled raster layers are created below working art and found during PSD reopen | Verified on fixture |
-| PSD reopen/structure validation | 32x32 fixture emitted `PHOTOPEA_STRUCTURE_BUILT`; new one-source session returns explicit `502` in 3 seconds on the current polygon runtime error | Partial; round-trip remains pending |
-| PSD visual/mask equivalence validation | The full-resolution result contains black/navy/blue-jean previews, an alpha mask, and a Photopea-reopened linked raster mask; direct PSD-channel pixel extraction remains a follow-up fixture | Partial |
-| Full-resolution job-level Photopea proof | Full-resolution Photopea attempts were bounded at 300 seconds and timed out; no new PSD is claimed as final | Partial; PNG core is available, PSD round-trip pending |
+| Real Photopea source + raster-carrier transfer | `bridge/server.mjs`, one source + one mask carrier, tokenized ArrayBuffer endpoints, no polygon or seven-PNG primary path; live 8×8 smoke completed | Verified for live smoke fixture |
+| Linked Photopea raster mask | Canonical charID transparency-selection sequence and linked mask creation in the bridge; reopened PSD mask pixels equal the accepted checkpoint | Verified for live smoke fixture |
+| Real editable garment-fill layers | Solid Color Fill content-layer Action Manager path for black/navy/blue-jean; all three previews independently match expected renders after reopen | Verified for live smoke fixture |
+| PSD reopen/structure validation | Live PSD begins with `8BPS`, contains the required layer set, and passes exact reopened-pixel comparison | Verified for live smoke fixture |
+| PSD visual/mask equivalence validation | `decodePng`, source+mask render comparison, exact checkpoint↔reopen pixel comparison and hash-bound adapter evidence | Verified for 8×8, 1000×1200, and `4500×5400` live fixtures |
+| Full-resolution Photopea session/export proof | `artifacts/photopea-full-smoke-20261006/`, `PhotopeaSessionClient`, returned `8BPS` PSD, exact reopened pixel evidence, 232.39 s total | Verified for direct Photopea session/export; external job-level POST → poll remains pending |
+| Full-resolution job-level Photopea proof | Async service job publication and POST → poll integration evidence | Not verified; task 5.4 remains explicitly unchecked |

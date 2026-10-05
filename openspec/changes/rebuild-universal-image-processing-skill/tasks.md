@@ -22,21 +22,21 @@
 ## 4. Artifact adapters
 
 - [x] 4.1 Implement filesystem ArtifactStore and JobStore with immutable job directories, idempotency lookup and TTL cleanup; verify retry and batch isolation behavior.
-- [ ] 4.2 Implement Photopea Live PSD export with actual source, candidate RGB, grayscale mask, linked raster mask and real garment-fill layers; verify a reopened PSD contains non-empty content and correct layer relationships.
+- [x] 4.2 Implement Photopea Live PSD export with one source, one raster mask carrier, actual source pixels, linked raster mask and real Solid Color Fill layers; verify a reopened PSD contains non-empty content, correct layer relationships and pixel equivalence.
 - [x] 4.3 Implement JSON report and artifact manifest generation with hashes, warnings, validation data and pipeline version; verify report references every emitted artifact.
 
 ## 5. Async service shell
 
 - [x] 5.1 Implement FastAPI/uvicorn endpoints for job submission, status, artifact listing/download and health; verify OpenAPI routes and HTTP error contracts.
-- [ ] 5.2 Implement async executor orchestration including mandatory Photopea evidence, protected-pixel diff evidence and explicit bridge-unavailable states; verify POST → poll → PNG/mask/PSD artifacts with a real Photopea export.
+- [ ] 5.2 Implement async executor orchestration including mandatory Photopea pixel evidence, same-revision protected-pixel evidence and explicit bridge-unavailable states; verify POST → poll → PNG/mask/PSD artifacts with a real Photopea export.
 - [x] 5.3 Add bearer authentication, request limits, correlation/job identifiers, JSON logs and Prometheus RED/domain metrics without high-cardinality labels; verify redaction and `/metrics` smoke tests.
 
 ## 6. Skill and deployment adapters
 
 - [x] 6.1 Update `skill/universal-image-matting/SKILL.md` with the structured policy contract, service invocation workflow, fail-closed rules and artifact interpretation; verify every documented command is executable or explicitly marked deployment-only.
-- [x] 6.2 Add a Skill helper for creating policy JSON, submitting multipart jobs, polling status and downloading bundles; verify it handles review_required/refused/failed distinctly.
+- [x] 6.2 Add a Skill helper for creating policy JSON, submitting multipart jobs including an accepted raster mask, polling the mandatory PSD stage by default and downloading bundles; verify it handles review_required/refused/failed distinctly.
 - [x] 6.3 Document Named Cloudflare Tunnel deployment with environment-injected URL/token and no Printify credentials; verify local service remains runnable without Cloudflare.
-- [ ] 6.4 Implement and document the Photopea Live outer-environment bridge; verify ArrayBuffer transfer, actual layer construction, PSD reopen/inspection and no `passed` status without conformance evidence.
+- [x] 6.4 Implement and document the Photopea Live outer-environment bridge; verify ArrayBuffer transfer, raster-carrier mask construction, PSD reopen/pixel inspection and no `passed` status without conformance evidence.
 
 ## 7. Verification and completion
 

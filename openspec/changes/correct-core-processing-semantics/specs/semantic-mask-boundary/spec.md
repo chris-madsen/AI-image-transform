@@ -68,17 +68,18 @@ for that revision and MUST NOT treat repository defaults as an AI decision.
 - **THEN** the agent MUST inspect them and either submit a new mask revision or
   freeze an explicit acceptance assessment before completion
 
-### Requirement: typed vision correction
-Vision review MUST return a frozen correction plan composed of normalized
-polygon regions and bounded selection operations. Arbitrary Photopea JavaScript
-MUST NOT cross the Skill boundary.
+### Requirement: typed raster vision correction
+Vision review MUST return a frozen `RasterMaskRevision` bound to the source,
+checkpoint, base-mask and result-mask hashes. The mask bytes are transferred as
+a grayscale/alpha carrier; polygons are not the mask representation and
+arbitrary Photopea JavaScript MUST NOT cross the Skill boundary.
 
 #### Scenario: protect a missed detail
 - **WHEN** vision review detects a lost ear, eye, glyph or intentional foliage
-- **THEN** the correction plan adds a protected polygon and the next Photopea
-  checkpoint preserves that region
+- **THEN** the correction revision supplies replacement or bounded raster pixels
+  and the next Photopea checkpoint preserves that region
 
 #### Scenario: remove an edge defect
 - **WHEN** vision review detects isolated external debris
-- **THEN** the correction plan subtracts a bounded polygon from the external
-  perimeter selection and the next checkpoint is revalidated
+- **THEN** the correction revision supplies replacement or bounded raster pixels
+  for the external perimeter and the next checkpoint is revalidated

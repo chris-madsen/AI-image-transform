@@ -19,12 +19,12 @@ adapter, not a second image-processing engine:
 2. Keep `must_keep`, `keep_if_intentional`, and `remove_only` explicit.
 3. Send the source image and policy to `ARTWORK_SERVICE_URL` using
    `scripts/submit_artwork_job.py`.
-4. Poll until `passed`, `review_required`, `refused`, or `failed`. If the
-   response contains `psd_export_status=pending`, download the core artifacts
-   immediately; do not wait for Photopea unless the user explicitly requests
-   PSD completion.
-5. Return the downloaded artifact bundle and explain the report status. Use
-   `--wait-for-psd` only when an explicit PSD wait is requested.
+4. Poll until `passed`, `review_required`, `refused`, or `failed`. The helper
+   waits for the Photopea PSD stage by default; this Skill is a complete PNG +
+   editable-PSD workflow and must not finish while `psd_export_status=pending`.
+   Use the explicit `--core-only` opt-out only for diagnostics, and report that
+   the result is not a complete print artifact.
+5. Return the downloaded artifact bundle and explain the report status.
 
 Example policy:
 
@@ -39,6 +39,7 @@ Example policy:
   "requested_variants": ["conservative", "artistic"],
   "mask_tuning": {
     "decision_id": "vision-review-<source-hash>-r1",
+    "source_sha256": "<64-hex-source-hash>",
     "background_tolerance": 8,
     "fade_low_distance": 4,
     "fade_full_distance": 64,
@@ -47,6 +48,8 @@ Example policy:
   },
   "visual_quality": {
     "reference_id": "manual-perimeter-panther-v1",
+    "source_sha256": "<64-hex-source-hash>",
+    "checkpoint_sha256": "<64-hex-checkpoint-hash>",
     "overall_score": 0.92,
     "subject_integrity": 0.98,
     "intentional_detail_score": 0.90,
@@ -55,12 +58,14 @@ Example policy:
     "confidence": 0.91,
     "reviewer_notes": ["Keep the panther, eyes, whiskers, and expressive foliage intact."]
   },
-  "photopea_mask_plan": {
-    "revision_id": "vision-mask-<source-hash>-r1",
-    "subject_polygons": [[[0.10, 0.10], [0.90, 0.10], [0.90, 0.90], [0.10, 0.90]]],
-    "remove_polygons": [],
-    "protect_polygons": [],
-    "feather_px": 2,
+  "photopea_mask_revision": {
+    "revision_id": "mask-<source-hash>-r1",
+    "parent_revision_id": null,
+    "source_sha256": "<64-hex-source-hash>",
+    "checkpoint_sha256": "<64-hex-checkpoint-hash>",
+    "base_mask_sha256": "<64-hex-base-mask-hash>",
+    "result_mask_sha256": "<64-hex-result-mask-hash>",
+    "operation": "replace_mask",
     "confidence": 0.92
   }
 }
@@ -80,17 +85,19 @@ fragmentation checks and refuses to pass a candidate with a torn edge,
 isolated debris, lost intentional details, or low confidence. A text-only
 description is never treated as visual understanding.
 
-`photopea_mask_plan` is also an agent/vision output. It is a frozen, normalized
-typed plan for the Photopea mask session, not JavaScript and not a pre-rendered
-mask PNG. The agent must derive it from the current source and checkpoint
-previews, increment `revision_id` after every correction, and omit it when the
-geometry is ambiguous. A missing plan must not trigger a Python-generated PSD
-fallback; the PSD stage must remain review-required or failed.
+`photopea_mask_revision` is an agent/vision output bound to one grayscale/alpha
+mask PNG uploaded with the job. It is a frozen typed revision, not JavaScript
+and not a polygon approximation. The revision MUST bind `source_sha256`,
+`checkpoint_sha256`, `base_mask_sha256` and `result_mask_sha256`; stale or
+cross-artwork hashes are rejected. Corrections create a new revision with a
+`parent_revision_id`. A missing revision or mask file must not trigger a
+Python-generated PSD fallback; the PSD stage remains review-required or failed.
 
-The intended Photopea loop is `source -> mask plan -> checkpoint -> vision
-review -> typed correction -> checkpoint`. The current bridge rejects a
-Photopea script/runtime error immediately and does not claim that this loop is
-complete until a real same-document checkpoint/round-trip fixture passes.
+The intended Photopea loop is `source + raster mask -> checkpoint -> vision
+review -> raster correction -> checkpoint`, in one bounded Photopea document.
+The bridge rejects arbitrary scripts and polygon plans immediately and does not
+claim that this loop is complete until a real same-document
+checkpoint/round-trip fixture passes.
 
 The service returns PNG, masks, dark-garment previews, a JSON report and an
 editable PSD. `review_required`, `refused`, and `failed` are not successes and
@@ -140,8 +147,9 @@ the policy JSON.
   writer. The bridge is not controlled by mouse-coordinate automation. The
   bridge has a bounded hard timeout; a slow export or script error is an
   explicit failed PSD stage, never an indefinitely running job. The bridge
-  must receive one source document plus a typed mask plan; it must not receive
-  seven pre-rendered PNG documents as the primary workflow.
+  must receive one source document plus one grayscale/alpha mask carrier and
+  its typed raster revision; it must not receive seven pre-rendered PNG
+  documents or a polygon plan as the primary workflow.
 
 ## Repository implementation
 

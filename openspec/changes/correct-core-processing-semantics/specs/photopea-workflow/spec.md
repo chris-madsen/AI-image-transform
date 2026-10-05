@@ -48,21 +48,30 @@ status; a slow browser MUST NOT block the core processing response.
 - **THEN** the job MUST expose the core artifacts and mark the PSD stage as
   failed or review-required without waiting indefinitely
 
-### Requirement: Photopea-authored mask session
+### Requirement: Photopea-authored raster mask session
 The bridge MUST open the source artwork once and create the working selection,
 raster masks and editable layers inside that Photopea document. It MUST accept
-only a validated typed mask plan and MUST NOT require pre-rendered artwork or
-mask PNG uploads for the PSD path.
+only one grayscale/alpha mask carrier plus a validated `RasterMaskRevision`.
+It MUST reject polygon plans, arbitrary JavaScript and seven pre-rendered PNG
+documents for the PSD path.
 
 #### Scenario: initial mask revision
-- **WHEN** the Skill submits a vision-produced polygon plan
+- **WHEN** the Skill submits one source, one raster mask carrier and a
+  hash-bound revision
 - **THEN** Photopea creates `RESTORED`, `WITH GAPS` and `WORKING MASK` from the
-  source layer and returns a checkpoint preview
+  source layer and returns artwork, mask and garment checkpoint previews
 
 #### Scenario: iterative correction
 - **WHEN** vision review identifies lost detail or external debris
-- **THEN** the bridge applies a typed correction plan to the same Photopea
+- **THEN** the bridge applies a typed raster correction revision to the same Photopea
   document and returns a new checkpoint without reopening seven image files
+
+#### Scenario: session transport
+- **WHEN** the Skill calls `POST /v1/photopea/sessions`, then submits a revision to
+  `/v1/photopea/sessions/{id}/revisions`
+- **THEN** the bridge keeps one browser/document alive, returns a checkpoint after
+  each revision, and accepts only one raster carrier with matching source,
+  checkpoint and parent hashes
 
 ### Requirement: bounded vision review loop
 The Skill MUST be able to request a checkpoint, pass it through a vision
@@ -71,7 +80,7 @@ revision count and wall-clock budget, and MUST fail closed when the provider
 does not return a valid correction or acceptance assessment.
 
 #### Scenario: invalid checkpoint decision
-- **WHEN** the vision provider returns no decision, an invalid polygon plan or
+- **WHEN** the vision provider returns no decision, a stale raster revision or
   a decision after the revision/time budget is exhausted
 - **THEN** the session stops with `review_required` or `failed` and MUST NOT
   export a PSD as `passed`

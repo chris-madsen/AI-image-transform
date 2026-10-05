@@ -15,17 +15,18 @@ import uuid
 from pathlib import Path
 
 
-def multipart(fields: dict[str, str], file_field: str, file_name: str, content: bytes, media_type: str) -> tuple[bytes, str]:
+def multipart(fields: dict[str, str], files: list[tuple[str, str, bytes, str]]) -> tuple[bytes, str]:
     boundary = f"----artwork-{uuid.uuid4().hex}"
     chunks: list[bytes] = []
     for name, value in fields.items():
         chunks.extend([f"--{boundary}\r\n".encode(), f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(), value.encode(), b"\r\n"])
-    chunks.extend([
-        f"--{boundary}\r\n".encode(),
-        f'Content-Disposition: form-data; name="{file_field}"; filename="{file_name}"\r\n'.encode(),
-        f"Content-Type: {media_type}\r\n\r\n".encode(), content, b"\r\n",
-        f"--{boundary}--\r\n".encode(),
-    ])
+    for file_field, file_name, content, media_type in files:
+        chunks.extend([
+            f"--{boundary}\r\n".encode(),
+            f'Content-Disposition: form-data; name="{file_field}"; filename="{file_name}"\r\n'.encode(),
+            f"Content-Type: {media_type}\r\n\r\n".encode(), content, b"\r\n",
+        ])
+    chunks.append(f"--{boundary}--\r\n".encode())
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
@@ -46,17 +47,21 @@ def request(url: str, *, method: str = "GET", data: bytes | None = None, content
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--photopea-mask", type=Path, help="Accepted grayscale/alpha mask carrier PNG")
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=900)
-    parser.add_argument("--wait-for-psd", action="store_true", help="Keep polling until the Photopea PSD stage is terminal")
+    parser.add_argument("--core-only", action="store_true", help="Explicitly stop after deterministic core artifacts; do not claim a complete PSD workflow")
     args = parser.parse_args()
     base = os.environ.get("ARTWORK_SERVICE_URL", "http://127.0.0.1:8000").rstrip("/")
     token = os.environ.get("ARTWORK_SERVICE_TOKEN")
     policy = json.loads(args.policy.read_text(encoding="utf-8"))
+    files = [("source", args.source.name, args.source.read_bytes(), "application/octet-stream")]
+    if args.photopea_mask:
+        files.append(("photopea_mask", args.photopea_mask.name, args.photopea_mask.read_bytes(), "image/png"))
     payload, content_type = multipart(
         {"policy_json": json.dumps(policy, ensure_ascii=False), "manifest_json": json.dumps({"client": "universal-image-matting-skill"})},
-        "source", args.source.name, args.source.read_bytes(), "application/octet-stream",
+        files,
     )
     status, raw = request(f"{base}/v1/jobs", method="POST", data=payload, content_type=content_type, token=token)
     if status != 202:
@@ -72,7 +77,7 @@ def main() -> int:
         body = json.loads(raw)
         report = body.get("report") or {}
         psd_pending = report.get("psd_export_status") == "pending"
-        if body["status"] in {"passed", "review_required", "refused", "failed"} or (psd_pending and not args.wait_for_psd):
+        if body["status"] in {"passed", "review_required", "refused", "failed"} or (psd_pending and args.core_only):
             break
         time.sleep(0.5)
     else:

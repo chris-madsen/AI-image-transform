@@ -6,16 +6,15 @@ from typing import Mapping, Protocol
 
 import numpy as np
 
-from .domain.models import MaskTuning, PhotopeaMaskPlan, ProcessingPolicy, ResolvedMaskBundle, VisualQualityAssessment
-
-
-@dataclass(frozen=True, slots=True)
-class PhotopeaCheckpoint:
-    """Typed evidence returned by a Photopea mask session."""
-
-    revision_id: str
-    artifact_id: str
-    source_hash: str
+from .domain.models import (
+    MaskReviewDecision,
+    MaskTuning,
+    PhotopeaCheckpoint,
+    ProcessingPolicy,
+    RasterMaskRevision,
+    ResolvedMaskBundle,
+    VisualQualityAssessment,
+)
 
 
 class PsdExporter(Protocol):
@@ -35,7 +34,7 @@ class VisionProvider(Protocol):
 
     def assess_candidates(self, candidates: Mapping[str, np.ndarray]) -> VisualQualityAssessment: ...
 
-    def review_photopea_checkpoint(self, checkpoint: PhotopeaCheckpoint) -> PhotopeaMaskPlan | None: ...
+    def review_photopea_checkpoint(self, checkpoint: PhotopeaCheckpoint) -> MaskReviewDecision: ...
 
 
 class ArtifactStore(Protocol):

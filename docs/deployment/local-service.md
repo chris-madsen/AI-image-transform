@@ -59,7 +59,7 @@ PHOTOPEA_EXPORT_TIMEOUT_MS=300000 npm start
 The single-source typed Photopea mask session has a separate fail-fast limit:
 
 ```bash
-PHOTOPEA_SESSION_TIMEOUT_MS=120000 npm start
+PHOTOPEA_SESSION_TIMEOUT_MS=300000 npm start
 ```
 
 Core PNG, mask and preview artifacts are produced before the Photopea adapter
@@ -69,11 +69,18 @@ is pending. The adapter has a hard five-minute timeout. Without a completed
 Photopea export the service MUST return `review_required` rather than claiming
 a completed PSD job.
 
-The current Photopea runtime still has an unresolved polygon-selection
-compatibility issue. Until the same-document checkpoint fixture passes, a
-Photopea mask-session error is explicitly `review_required`/failed; it is never
-silently replaced with generated PNG layers.
+The Photopea session uses a raster mask carrier and canonical charID mask
+creation; polygon selection plans are rejected. Until the same-document
+checkpoint and pixel round-trip fixture passes against the deployed Photopea
+runtime, a mask-session error is explicitly `review_required`/failed; it is
+never silently replaced with generated PNG layers.
 
-The Skill helper does not wait for a pending PSD by default. Pass
-`--wait-for-psd` only when the caller explicitly accepts the external Photopea
-latency.
+For iterative review, the bridge exposes `POST /v1/photopea/sessions`,
+`POST /v1/photopea/sessions/{id}/revisions`, and
+`POST /v1/photopea/sessions/{id}/finalize`. The revision endpoint keeps one
+Photopea document alive and requires matching source, checkpoint, and parent
+revision hashes.
+
+The Skill helper waits for the PSD stage by default. Use `--core-only` only for
+diagnostics; that mode is not a complete print artifact and must be reported as
+such.

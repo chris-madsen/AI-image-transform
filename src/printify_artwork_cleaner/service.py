@@ -44,20 +44,22 @@ def _event(event_type: str, **fields: Any) -> None:
     LOGGER.info(json.dumps({"event_type": event_type, **fields}, ensure_ascii=False, sort_keys=True))
 
 
-def _decode_resolved_masks(payloads: dict[str, bytes]) -> ResolvedMaskBundle:
+def _decode_resolved_masks(payloads: dict[str, bytes]) -> tuple[ResolvedMaskBundle, np.ndarray | None]:
     decoded: dict[str, np.ndarray] = {}
     shapes: set[tuple[int, int]] = set()
     for key, payload in payloads.items():
         with Image.open(io.BytesIO(payload)) as image:
             if key == "protected_reference":
                 mask = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+            elif key == "photopea_mask":
+                mask = np.asarray(image.convert("L"), dtype=np.uint8)
             else:
                 mask = np.asarray(image.convert("L"), dtype=np.uint8) > 0
         decoded[key] = mask
         shapes.add(mask.shape[:2])
     if len(shapes) > 1:
         raise ValueError("resolved masks must have identical dimensions")
-    return ResolvedMaskBundle(
+    bundle = ResolvedMaskBundle(
         semantic_protection=decoded.get("semantic_protection"),
         removable_background=decoded.get("removable_background"),
         uncertainty=decoded.get("uncertainty"),
@@ -65,6 +67,7 @@ def _decode_resolved_masks(payloads: dict[str, bytes]) -> ResolvedMaskBundle:
         provenance=("multipart-mask",),
         confidence=1.0,
     )
+    return bundle, decoded.get("photopea_mask")
 
 
 class ServiceRuntime:
@@ -110,10 +113,10 @@ class ServiceRuntime:
                 JOBS_TOTAL.labels(status="failed").inc()
                 return
             output_dir = self.store.job_dir(job_id) / "artifacts"
-            resolved_masks = _decode_resolved_masks(mask_payloads) if mask_payloads else None
+            resolved_masks, authoritative_mask = _decode_resolved_masks(mask_payloads) if mask_payloads else (None, None)
             # PNG/mask/preview generation is the bounded core job. Photopea
             # is an external, slow adapter and must never block this stage.
-            report = process_image_bytes(source, parsed.value, output_dir, psd_exporter=None, resolved_masks=resolved_masks)
+            report = process_image_bytes(source, parsed.value, output_dir, psd_exporter=None, resolved_masks=resolved_masks, authoritative_mask=authoritative_mask)
             report_payload = report.as_dict()
             report_payload["psd_export_status"] = "pending" if self.psd_exporter else "not_configured"
             self.store.update(
@@ -143,14 +146,27 @@ class ServiceRuntime:
         try:
             source_rgba = np.asarray(Image.open(io.BytesIO(source)).convert("RGBA"), dtype=np.uint8)
             if getattr(self.psd_exporter, "supports_photopea_session", False):
-                if policy.photopea_mask_plan is None:
-                    raise PhotopeaLiveApiUnavailable("photopea_mask_plan is required for Photopea-authored masks")
-                export_kwargs = {"mask_plan": asdict(policy.photopea_mask_plan)}
-                # The Photopea session opens the frozen source and authors the
-                # masks in that same document. Do not decode generated PNG
-                # candidates or send them as hidden PSD inputs.
-                chosen = source_rgba
-                mask = source_rgba[..., 3]
+                if policy.photopea_mask_revision is None:
+                    raise PhotopeaLiveApiUnavailable("photopea_mask_revision is required for Photopea-authored masks")
+                variants = tuple(report_payload.get("variants") or ("conservative", "artistic"))
+                arrays = {
+                    name: np.asarray(Image.open(output_dir / f"artwork_{name}.png").convert("RGBA"), dtype=np.uint8)
+                    for name in variants
+                }
+                chosen_name = "artistic" if "artistic" in arrays else variants[0]
+                chosen = arrays[chosen_name]
+                mask = np.asarray(Image.open(output_dir / f"mask_{chosen_name}.png").convert("L"), dtype=np.uint8)
+                revision = policy.photopea_mask_revision
+                if revision.source_sha256 != sha256_bytes(source):
+                    raise PhotopeaLiveApiUnavailable("raster revision source_sha256 does not match frozen source bytes")
+                if chosen.shape != source_rgba.shape:
+                    raise PhotopeaLiveApiUnavailable("Photopea source and accepted candidate dimensions differ")
+                if hashlib.sha256(mask.tobytes()).hexdigest() != revision.result_mask_sha256:
+                    raise PhotopeaLiveApiUnavailable("raster revision result_mask_sha256 does not match accepted candidate")
+                # Photopea receives the exact accepted PNG revision that is
+                # already published as the authoritative candidate. It must
+                # never rebuild a second mask from source alpha or polygons.
+                export_kwargs = {"mask_revision": asdict(revision)}
             else:
                 variants = tuple(report_payload.get("variants") or ("conservative", "artistic"))
                 arrays = {
@@ -171,13 +187,14 @@ class ServiceRuntime:
                 "sha256": sha256_bytes(psd_path.read_bytes()),
             }
             verified = bool(getattr(self.psd_exporter, "round_trip_verified", False))
-            self._publish_psd_result(job_id, report_payload, artifact, verified=verified)
+            evidence = getattr(self.psd_exporter, "evidence", None)
+            self._publish_psd_result(job_id, report_payload, artifact, verified=verified, evidence=asdict(evidence) if evidence else None)
             _event("PhotopeaExportCompleted", job_id=job_id, verified=verified)
         except Exception as exc:  # adapter failure is explicit; core artifacts remain available
             self._publish_psd_result(job_id, report_payload, None, error=str(exc))
             _event("PhotopeaExportFailed", job_id=job_id, error_type=type(exc).__name__)
 
-    def _publish_psd_result(self, job_id: str, report_payload: dict[str, Any], artifact: dict[str, Any] | None, *, verified: bool = False, error: str | None = None) -> None:
+    def _publish_psd_result(self, job_id: str, report_payload: dict[str, Any], artifact: dict[str, Any] | None, *, verified: bool = False, evidence: dict[str, Any] | None = None, error: str | None = None) -> None:
         updated = json.loads(json.dumps(report_payload))
         validation = updated["validation"]
         stage = updated["stage_status"]
@@ -187,6 +204,8 @@ class ServiceRuntime:
             updated["artifacts"].append(artifact)
             stage["photopea_processing_status"] = "passed"
             stage["psd_validation_status"] = "passed" if verified else "unverified_payload"
+            if evidence is not None:
+                updated["photopea_evidence"] = evidence
             if not verified:
                 warnings.append("psd_structure_unverified")
                 review_regions.append("psd_validation")
@@ -278,6 +297,7 @@ def create_app(root: Path | None = None, token: str | None = None, psd_exporter=
         removal_mask: Annotated[UploadFile | None, File()] = None,
         uncertainty_mask: Annotated[UploadFile | None, File()] = None,
         protected_reference: Annotated[UploadFile | None, File()] = None,
+        photopea_mask: Annotated[UploadFile | None, File()] = None,
     ) -> JSONResponse:
         max_bytes = int(os.getenv("MAX_SOURCE_BYTES", str(100 * 1024 * 1024)))
         chunks: list[bytes] = []
@@ -289,7 +309,7 @@ def create_app(root: Path | None = None, token: str | None = None, psd_exporter=
             chunks.append(chunk)
         raw = b"".join(chunks)
         mask_payloads: dict[str, bytes] = {}
-        for key, upload in (("semantic_protection", semantic_protection_mask), ("removable_background", removal_mask), ("uncertainty", uncertainty_mask), ("protected_reference", protected_reference)):
+        for key, upload in (("semantic_protection", semantic_protection_mask), ("removable_background", removal_mask), ("uncertainty", uncertainty_mask), ("protected_reference", protected_reference), ("photopea_mask", photopea_mask)):
             if upload is not None:
                 data = await upload.read(max_bytes + 1)
                 if len(data) > max_bytes:

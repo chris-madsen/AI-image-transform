@@ -29,3 +29,11 @@ evidence.
 #### Scenario: placeholder layers
 - **WHEN** any required PSD layer is empty, missing, unlinked or unverified
 - **THEN** PSD validation fails and the job cannot become `passed`
+
+### Requirement: same-revision final outputs
+The final PNG, mask previews and PSD MUST reference one accepted raster mask
+revision and the report MUST include its source/checkpoint/result hashes.
+
+#### Scenario: divergent final mask
+- **WHEN** the PSD input mask differs from the accepted PNG mask
+- **THEN** export fails closed and the job is not `passed`

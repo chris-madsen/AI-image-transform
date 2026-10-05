@@ -26,19 +26,21 @@ is calculated against the frozen source/reference for every candidate.
 ### One Photopea document and iterative mask session
 
 Photopea is the source of truth for mask authoring. The bridge opens the source
-once, duplicates its layer inside that document, and applies typed selection
-operations (`polygon`, `add`, `subtract`, `protect`, `feather`) through the
-Photopea scripting API. It does not import Python-generated artwork/mask PNGs
-or transfer layers with clipboard copy/paste. The resulting raster masks,
-working mask and preview fills are created in Photopea and saved through
+once, transfers one grayscale/alpha mask carrier through ArrayBuffer messaging,
+and uses the carrier transparency with the canonical charID Action Manager
+sequence to create linked raster masks. It does not approximate fur, whiskers,
+smoke or typography with polygons and does not import seven Python-generated
+artwork/mask PNG documents. The resulting raster masks, working mask and
+editable Solid Color Fill layers are created in Photopea and saved through
 `saveToOE("psd:true")`.
 
 The Skill/vision adapter owns a bounded review loop. After each Photopea
 checkpoint it requests a vision assessment of the rendered artwork and mask
-preview. The assessment returns a typed `MaskCorrectionPlan`, never arbitrary
-JavaScript. The bridge applies that plan to the same Photopea document and
-emits the next checkpoint. The loop is capped by revision count and wall-clock
-budget; missing or weak vision evidence remains `review_required`.
+preview. The assessment returns a hash-bound `RasterMaskRevision` plus a mask
+carrier, never arbitrary JavaScript. The bridge applies that revision to the
+same Photopea document and emits the next checkpoint. The loop is capped by
+revision count and wall-clock budget; missing, stale or weak vision evidence
+remains `review_required`.
 
 ### Acceptance state machine
 

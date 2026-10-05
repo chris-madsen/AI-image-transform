@@ -48,12 +48,12 @@ reviewed mask permits a change.
 
 ### PSD as a semantic artifact
 
-The Photopea adapter imports source, candidate RGB and final grayscale mask into
-one document. It creates non-empty `SOURCE BACKUP`, `WORKING ART`,
-`WORKING MASK` and independently toggleable garment-fill layers, then links a
-raster layer mask to `WORKING ART`. The adapter proves layer content,
-mask equivalence and rendered dark-garment behavior before returning a passed
-PSD status. `8BPS` is a transport sanity check only.
+The Photopea adapter transfers one source and one grayscale/alpha mask carrier
+into one document. It creates non-empty `SOURCE BACKUP`, `RESTORED`, `WITH
+GAPS`, `WORKING MASK` and editable Solid Color Fill layers, then links the
+carrier-derived raster mask to both artwork layers. The adapter proves layer
+content, mask equivalence and rendered dark-garment behavior after reopening
+the exact returned PSD. `8BPS` is a transport sanity check only.
 
 ### Functional core and imperative shell
 

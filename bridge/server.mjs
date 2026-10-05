@@ -1,189 +1,37 @@
+import crypto from "node:crypto";
 import express from "express";
 import multer from "multer";
+import { inflateSync } from "node:zlib";
 import { chromium } from "playwright";
 
 const app = express();
-const upload = multer({ limits: { fileSize: 100 * 1024 * 1024, files: 7 } });
+const upload = multer({ limits: { fileSize: 100 * 1024 * 1024, files: 2 } });
 const port = Number(process.env.PORT || 8787);
 const token = process.env.PHOTOPEA_LIVE_API_TOKEN || "";
-const skipRoundTrip = process.env.PHOTOPEA_SKIP_ROUNDTRIP === "1";
+const transferStore = new Map();
+const photopeaSessions = new Map();
 
 function authorized(request) {
   return !token || request.get("authorization") === `Bearer ${token}`;
 }
 
-function photopeaScript(hasVariants) {
-  const variantDocuments = hasVariants ? `
-      var artisticDocument = app.documents[3];
-      var artisticMaskDocument = app.documents[4];
-      var conservativeDocument = app.documents[5];
-      var conservativeMaskDocument = app.documents[6];
-    ` : "";
-  return `
-    (function () {
-      function cTID(value) {
-        return charIDToTypeID(value);
-      }
-      function copyLayer(from, to, name) {
-        app.echoToOE("COPY_START:" + name);
-        app.activeDocument = from;
-        from.selection.selectAll();
-        from.selection.copy();
-        app.activeDocument = to;
-        var previousLayer = to.activeLayer;
-        to.paste();
-        // Photopea inserts the pasted layer as the active layer. It is not
-        // guaranteed to be layers[0]; renaming layers[0] used to rename an
-        // unrelated layer and leave the pasted image as a visible "Layer 1".
-        var pastedLayer = to.activeLayer;
-        if (!pastedLayer || pastedLayer === previousLayer) {
-          throw new Error("paste did not create an active layer: " + name);
-        }
-        pastedLayer.name = name;
-        if (pastedLayer.name !== name) {
-          throw new Error("pasted layer rename failed: " + name);
-        }
-        app.echoToOE("COPY_DONE:" + name);
-        return pastedLayer;
-      }
-      function loadActiveLayerTransparencyAsSelection() {
-        var descriptor = new ActionDescriptor();
-        var selectionReference = new ActionReference();
-        selectionReference.putProperty(cTID("Chnl"), cTID("fsel"));
-        descriptor.putReference(cTID("null"), selectionReference);
-        var transparencyReference = new ActionReference();
-        transparencyReference.putEnumerated(cTID("Chnl"), cTID("Chnl"), cTID("Trsp"));
-        descriptor.putReference(cTID("T   "), transparencyReference);
-        executeAction(cTID("setd"), descriptor, DialogModes.NO);
-      }
-      function addRasterMaskFromSelection() {
-        app.echoToOE("MASK_START");
-        var descriptor = new ActionDescriptor();
-        var reference = new ActionReference();
-        descriptor.putClass(cTID("Nw  "), cTID("Chnl"));
-        reference.putEnumerated(cTID("Chnl"), cTID("Chnl"), cTID("Msk "));
-        descriptor.putReference(cTID("At  "), reference);
-        descriptor.putEnumerated(cTID("Usng"), cTID("UsrM"), cTID("RvlS"));
-        executeAction(cTID("Mk  "), descriptor, DialogModes.NO);
-        app.echoToOE("MASK_CREATED");
-      }
-      function selectRasterMaskChannel() {
-        var descriptor = new ActionDescriptor();
-        var reference = new ActionReference();
-        reference.putEnumerated(cTID("Chnl"), cTID("Chnl"), cTID("Msk "));
-        descriptor.putReference(cTID("null"), reference);
-        descriptor.putBoolean(cTID("MkVs"), false);
-        executeAction(cTID("slct"), descriptor, DialogModes.NO);
-      }
-      function selectRgbChannel() {
-        var descriptor = new ActionDescriptor();
-        var reference = new ActionReference();
-        reference.putEnumerated(cTID("Chnl"), cTID("Chnl"), cTID("RGB "));
-        descriptor.putReference(cTID("null"), reference);
-        descriptor.putBoolean(cTID("MkVs"), false);
-        executeAction(cTID("slct"), descriptor, DialogModes.NO);
-      }
-      function addMaskedLayer(artDocument, maskDocument, name, visible) {
-        var artworkLayer = copyLayer(artDocument, sourceDocument, name);
-        var maskLayer = copyLayer(maskDocument, sourceDocument, name + " MASK");
-        sourceDocument.activeLayer = maskLayer;
-        loadActiveLayerTransparencyAsSelection();
-        sourceDocument.activeLayer = artworkLayer;
-        addRasterMaskFromSelection();
-        sourceDocument.selection.deselect();
-        maskLayer.visible = false;
-        artworkLayer.visible = visible;
-        selectRgbChannel();
-        return artworkLayer;
-      }
-      function addColorLayer(document, name, red, green, blue) {
-        app.echoToOE("FILL_START:" + name);
-        app.activeDocument = document;
-        var layer = document.artLayers.add();
-        layer.name = name;
-        document.currentLayer = layer;
-        var color = new SolidColor();
-        color.rgb.red = red;
-        color.rgb.green = green;
-        color.rgb.blue = blue;
-        app.foregroundColor = color;
-        document.selection.selectAll();
-        document.selection.fill(app.foregroundColor);
-        document.selection.deselect();
-        layer.visible = false;
-        app.echoToOE("FILL_DONE:" + name);
-        return layer;
-      }
-      function hideAllLayers(document) {
-        for (var index = 0; index < document.layers.length; index += 1) {
-          document.layers[index].visible = false;
-        }
-      }
-      var sourceDocument = app.documents[0];
-      var artworkDocument = app.documents[1];
-      var maskDocument = app.documents[2];
-      ${variantDocuments}
-      sourceDocument.name = "ARTWORK CLEANUP";
-      app.echoToOE("DOCS_READY");
-      app.activeDocument = sourceDocument;
-      app.echoToOE("LAYER_COUNTS:" + sourceDocument.layers.length + ":" + sourceDocument.artLayers.length);
-      var sourceLayer = sourceDocument.artLayers[0];
-      app.echoToOE("SOURCE_LAYER_READY:" + (sourceLayer ? "yes" : "no"));
-      sourceLayer.name = "SOURCE BACKUP";
-      sourceLayer.visible = false;
-      app.echoToOE("SOURCE_LAYER_NAMED");
-      addColorLayer(sourceDocument, "BLACK (COLOR FILL)", 0, 0, 0);
-      addColorLayer(sourceDocument, "WHITE (COLOR FILL)", 255, 255, 255);
-      addColorLayer(sourceDocument, "GRAY (COLOR FILL)", 119, 119, 119);
-      addColorLayer(sourceDocument, "NAVY (COLOR FILL)", 54, 75, 99);
-      addColorLayer(sourceDocument, "BLUE JEAN (COLOR FILL)", 110, 142, 174);
-      ${hasVariants ? `
-      var restored = addMaskedLayer(artworkDocument, maskDocument, "RESTORED", true);
-      var withGaps = addMaskedLayer(conservativeDocument, conservativeMaskDocument, "WITH GAPS", false);
-      var workingMask = copyLayer(maskDocument, sourceDocument, "WORKING MASK");
-      workingMask.visible = false;
-      hideAllLayers(sourceDocument);
-      restored.visible = true;
-      sourceDocument.activeLayer = restored;
-      selectRasterMaskChannel();
-      app.echoToOE("PHOTOPEA_MASK_VERIFIED");
-      selectRgbChannel();
-      ` : `
-      // Fast/diagnostic input contains one candidate. Duplicate the already
-      // masked RESTORED layer instead of uploading another full-resolution
-      // candidate. Production jobs send both candidates and use the branch
-      // above; this path exists to keep the five-minute PSD smoke path bounded.
-      var restored = addMaskedLayer(artworkDocument, maskDocument, "RESTORED", true);
-      var withGaps = restored.duplicate();
-      withGaps.name = "WITH GAPS";
-      withGaps.visible = false;
-      var workingMask = copyLayer(maskDocument, sourceDocument, "WORKING MASK");
-      workingMask.visible = false;
-      app.activeDocument = sourceDocument;
-      sourceDocument.activeLayer = restored;
-      selectRasterMaskChannel();
-      app.echoToOE("PHOTOPEA_MASK_VERIFIED");
-      selectRgbChannel();
-      `}
-      // A transparent document must open with artwork visible and every
-      // diagnostic fill/carrier hidden. No accidental pasted layer may remain
-      // visible, otherwise Photopea displays a black/opaque canvas.
-      hideAllLayers(sourceDocument);
-      restored.visible = true; sourceDocument.activeLayer = restored;
-      selectRgbChannel();
-      app.activeDocument = sourceDocument;
-      app.echoToOE("PHOTOPEA_STRUCTURE_BUILT");
-      sourceDocument.saveToOE("psd:true");
-    })();
-  `;
+function transfer(buffer, ttlMs = 10 * 60 * 1000) {
+  const id = crypto.randomUUID();
+  transferStore.set(id, Buffer.from(buffer));
+  setTimeout(() => transferStore.delete(id), ttlMs).unref();
+  return id;
 }
 
-function photopeaMaskSessionScript(plan) {
+
+// Photopea's scripting runtime is Photoshop-compatible ES5. This script is
+// intentionally conservative: no DOM selection API, no polygons and no
+// client-provided JavaScript cross the bridge boundary.
+function photopeaRasterMaskScript({ finalize = true } = {}) {
   return `
     (function () {
-      var plan = ${JSON.stringify(plan)};
       function cTID(value) { return charIDToTypeID(value); }
       function sTID(value) { return stringIDToTypeID(value); }
+      function message(value) { app.echoToOE(value); }
       function duplicateLayer(document, layer, name) {
         document.activeLayer = layer;
         var descriptor = new ActionDescriptor();
@@ -195,74 +43,48 @@ function photopeaMaskSessionScript(plan) {
         duplicate.name = name;
         return duplicate;
       }
-      function selectPolygon(document, polygon, mode) {
-        var action = mode === "subtract" ? sTID("subtractFrom") : (mode === "add" ? sTID("addTo") : sTID("set"));
-        var descriptor = new ActionDescriptor();
-        var reference = new ActionReference();
-        reference.putProperty(sTID("channel"), sTID("selection"));
-        descriptor.putReference(sTID("null"), reference);
-        var polygonDescriptor = new ActionDescriptor();
-        var points = new ActionList();
-        for (var pointIndex = 0; pointIndex <= polygon.length; pointIndex += 1) {
-          var point = polygon[pointIndex % polygon.length];
-          var pointDescriptor = new ActionDescriptor();
-          pointDescriptor.putUnitDouble(sTID("horizontal"), sTID("pixelsUnit"), point[0] * Number(document.width.value || document.width));
-          pointDescriptor.putUnitDouble(sTID("vertical"), sTID("pixelsUnit"), point[1] * Number(document.height.value || document.height));
-          points.putObject(sTID("paint"), pointDescriptor);
-        }
-        polygonDescriptor.putList(sTID("points"), points);
-        descriptor.putObject(sTID("to"), sTID("polygon"), polygonDescriptor);
-        descriptor.putBoolean(sTID("antiAlias"), true);
-        executeAction(action, descriptor, DialogModes.NO);
-      }
-      function deselect(document) {
-        var descriptor = new ActionDescriptor();
-        var reference = new ActionReference();
-        reference.putProperty(cTID("Chnl"), cTID("fsel"));
-        descriptor.putReference(cTID("null"), reference);
-        descriptor.putEnumerated(cTID("T   "), cTID("Ordn"), cTID("None"));
-        executeAction(cTID("setd"), descriptor, DialogModes.NO);
+      function copyLayer(fromDocument, toDocument, name, layer) {
+        app.activeDocument = fromDocument;
+        fromDocument.activeLayer = layer || fromDocument.artLayers[0];
+        fromDocument.selection.selectAll();
+        fromDocument.selection.copy();
+        app.activeDocument = toDocument;
+        toDocument.paste();
+        var pasted = toDocument.activeLayer;
+        pasted.name = name;
+        return pasted;
       }
       function selectAll(document) {
+        app.activeDocument = document;
         var descriptor = new ActionDescriptor();
-        var reference = new ActionReference();
-        reference.putProperty(cTID("Chnl"), cTID("fsel"));
-        descriptor.putReference(cTID("null"), reference);
+        var selection = new ActionReference();
+        selection.putProperty(cTID("Chnl"), cTID("fsel"));
+        descriptor.putReference(cTID("null"), selection);
         descriptor.putEnumerated(cTID("T   "), cTID("Ordn"), cTID("Al  "));
         executeAction(cTID("setd"), descriptor, DialogModes.NO);
       }
-      function fillForeground(document) {
+      function deselect(document) {
+        app.activeDocument = document;
+        var descriptor = new ActionDescriptor();
+        var selection = new ActionReference();
+        selection.putProperty(cTID("Chnl"), cTID("fsel"));
+        descriptor.putReference(cTID("null"), selection);
+        descriptor.putEnumerated(cTID("T   "), cTID("Ordn"), cTID("None"));
+        executeAction(cTID("setd"), descriptor, DialogModes.NO);
+      }
+      function fillColor(document, red, green, blue) {
+        var color = new SolidColor();
+        color.rgb.red = red; color.rgb.green = green; color.rgb.blue = blue;
+        app.foregroundColor = color;
         var descriptor = new ActionDescriptor();
         descriptor.putEnumerated(sTID("using"), sTID("fillContents"), sTID("foregroundColor"));
         descriptor.putUnitDouble(sTID("opacity"), sTID("percentUnit"), 100);
         descriptor.putEnumerated(sTID("mode"), sTID("blendMode"), sTID("normal"));
         executeAction(sTID("fill"), descriptor, DialogModes.NO);
       }
-      function selectPlan(document, includeRemovals) {
-        var first = true;
-        for (var subjectIndex = 0; subjectIndex < plan.subject_polygons.length; subjectIndex += 1) {
-          var polygon = plan.subject_polygons[subjectIndex];
-          selectPolygon(document, polygon, first ? "replace" : "add");
-          first = false;
-        }
-        if (includeRemovals) {
-          for (var removeIndex = 0; removeIndex < plan.remove_polygons.length; removeIndex += 1) {
-            var polygon = plan.remove_polygons[removeIndex];
-            selectPolygon(document, polygon, "subtract");
-          }
-        }
-        for (var protectIndex = 0; protectIndex < plan.protect_polygons.length; protectIndex += 1) {
-          var polygon = plan.protect_polygons[protectIndex];
-          selectPolygon(document, polygon, "add");
-        }
-        if (plan.feather_px > 0) {
-          var featherDescriptor = new ActionDescriptor();
-          featherDescriptor.putUnitDouble(cTID("Rds "), cTID("#Pxl"), plan.feather_px);
-          executeAction(cTID("Fthr"), featherDescriptor, DialogModes.NO);
-        }
-      }
-      function addRasterMaskFromSelection(document, layer) {
-        document.activeLayer = layer;
+      function addLinkedRasterMask(document, artwork) {
+        app.activeDocument = document;
+        document.activeLayer = artwork;
         var descriptor = new ActionDescriptor();
         var reference = new ActionReference();
         descriptor.putClass(cTID("Nw  "), cTID("Chnl"));
@@ -271,340 +93,878 @@ function photopeaMaskSessionScript(plan) {
         descriptor.putEnumerated(cTID("Usng"), cTID("UsrM"), cTID("RvlS"));
         executeAction(cTID("Mk  "), descriptor, DialogModes.NO);
       }
-      function fillLayer(document, name, red, green, blue) {
-        var layer = document.artLayers.add();
-        layer.name = name;
+      function selectLayerLuminance(document, layer) {
+        // The carrier is opaque grayscale. With only that layer visible, the
+        // document red channel is an exact grayscale selection, including
+        // partial values; unlike clipboard-pasting into a mask channel this
+        // path is supported by Photopea's Action Manager.
+        app.activeDocument = document;
+        hideAll(document);
+        layer.visible = true;
         document.activeLayer = layer;
-        var color = new SolidColor();
-        color.rgb.red = red; color.rgb.green = green; color.rgb.blue = blue;
-        app.foregroundColor = color;
-        selectAll(document);
-        fillForeground(document);
+        var descriptor = new ActionDescriptor();
+        var selection = new ActionReference();
+        selection.putProperty(cTID("Chnl"), cTID("fsel"));
+        var channel = new ActionReference();
+        channel.putEnumerated(cTID("Chnl"), cTID("Chnl"), cTID("Rd  "));
+        descriptor.putReference(cTID("null"), selection);
+        descriptor.putReference(cTID("T   "), channel);
+        executeAction(cTID("setd"), descriptor, DialogModes.NO);
+      }
+      function applyRasterMaskFromPixels(document, maskSource, artwork) {
+        selectLayerLuminance(document, maskSource);
+        addLinkedRasterMask(document, artwork);
         deselect(document);
+        maskSource.visible = false;
+      }
+      function addSolidColorFill(document, name, red, green, blue) {
+        // Content layers are editable Solid Color Fill layers, not full-canvas
+        // raster layers. If Photopea rejects this descriptor we fail the job;
+        // there is no misleading raster fallback.
+        app.activeDocument = document;
+        var descriptor = new ActionDescriptor();
+        var reference = new ActionReference();
+        reference.putClass(sTID("contentLayer"));
+        descriptor.putReference(cTID("null"), reference);
+        var content = new ActionDescriptor();
+        var solid = new ActionDescriptor();
+        var color = new ActionDescriptor();
+        color.putDouble(cTID("Rd  "), red);
+        color.putDouble(cTID("Grn "), green);
+        color.putDouble(cTID("Bl  "), blue);
+        solid.putObject(cTID("Clr "), cTID("RGBC"), color);
+        content.putObject(cTID("Type"), sTID("solidColorLayer"), solid);
+        descriptor.putObject(cTID("Usng"), sTID("contentLayer"), content);
+        executeAction(cTID("Mk  "), descriptor, DialogModes.NO);
+        var layer = document.activeLayer;
+        layer.name = name;
         layer.visible = false;
         return layer;
       }
       function hideAll(document) {
+        app.activeDocument = document;
         for (var index = 0; index < document.layers.length; index += 1) {
           document.layers[index].visible = false;
         }
       }
-      try {
-      var document = app.documents[0];
-      document.name = "ARTWORK CLEANUP";
-      var source = document.artLayers[0];
-      if (!source) throw new Error("source layer is missing");
-      source.name = "SOURCE BACKUP";
-      source.visible = false;
-      var restored = duplicateLayer(document, source, "RESTORED");
-      restored.visible = true;
-      selectPlan(document, false);
-      addRasterMaskFromSelection(document, restored);
-      deselect(document);
-      var withGaps = duplicateLayer(document, source, "WITH GAPS");
-      withGaps.visible = false;
-      selectPlan(document, true);
-      addRasterMaskFromSelection(document, withGaps);
-      deselect(document);
-      var workingMask = document.artLayers.add();
-      workingMask.name = "WORKING MASK";
-      document.activeLayer = workingMask;
-      var black = new SolidColor();
-      black.rgb.red = 0; black.rgb.green = 0; black.rgb.blue = 0;
-      app.foregroundColor = black;
-      selectAll(document);
-      fillForeground(document);
-      deselect(document);
-      selectPlan(document, true);
-      var white = new SolidColor();
-      white.rgb.red = 255; white.rgb.green = 255; white.rgb.blue = 255;
-      app.foregroundColor = white;
-      fillForeground(document);
-      deselect(document);
-      workingMask.visible = false;
-      fillLayer(document, "BLACK (COLOR FILL)", 0, 0, 0);
-      fillLayer(document, "WHITE (COLOR FILL)", 255, 255, 255);
-      fillLayer(document, "GRAY (COLOR FILL)", 119, 119, 119);
-      fillLayer(document, "NAVY (COLOR FILL)", 54, 75, 99);
-      fillLayer(document, "BLUE JEAN (COLOR FILL)", 110, 142, 174);
-      hideAll(document);
-      restored.visible = true;
-      document.activeLayer = restored;
-      app.echoToOE("PHOTOPEA_MASK_VERIFIED:" + plan.revision_id);
-      app.echoToOE("PHOTOPEA_STRUCTURE_BUILT");
-      document.clearHistory();
-      document.saveToOE("psd:true");
-      } catch (error) {
-        app.echoToOE("PHOTOPEA_STRUCTURE_FAILED:session:" + String(error));
+      function exportPng(document, label) {
+        app.activeDocument = document;
+        message("PHOTOPEA_EXPORT:" + label);
+        document.saveToOE("png");
       }
+      function exportLayerView(document, restored, layer, label) {
+        hideAll(document);
+        layer.visible = true;
+        if (restored) restored.visible = true;
+        exportPng(document, label);
+      }
+      function exportMaskView(document, maskLayer, label) {
+        hideAll(document);
+        maskLayer.visible = true;
+        document.activeLayer = maskLayer;
+        exportPng(document, label);
+      }
+      function build() {
+        var document = app.documents[0];
+        var carrierDocument = app.documents[1];
+        if (!document || !carrierDocument) throw new Error("source and mask carrier documents are required");
+        var originalSource = document.artLayers[0];
+        var carrier = carrierDocument.artLayers[0];
+        if (!originalSource || !carrier) throw new Error("source or mask carrier layer is missing");
+        var source = copyLayer(document, document, "SOURCE BACKUP");
+        source.visible = false;
+        originalSource.visible = false;
+        var maskCarrier = copyLayer(carrierDocument, document, "MASK CARRIER", carrier);
+        maskCarrier.name = "WORKING MASK";
+        maskCarrier.visible = false;
+        carrierDocument.close(SaveOptions.DONOTSAVECHANGES);
+        var workingMask = maskCarrier;
+        var restored = duplicateLayer(document, source, "RESTORED");
+        applyRasterMaskFromPixels(document, maskCarrier, restored);
+        var withGaps = duplicateLayer(document, source, "WITH GAPS");
+        applyRasterMaskFromPixels(document, maskCarrier, withGaps);
+        var maskBase = document.artLayers.add();
+        maskBase.name = "WORKING MASK BASE";
+        maskBase.visible = false;
+        selectAll(document); fillColor(document, 0, 0, 0); deselect(document);
+        var fills = [
+          addSolidColorFill(document, "BLACK (COLOR FILL)", 0, 0, 0),
+          addSolidColorFill(document, "NAVY (COLOR FILL)", 54, 75, 99),
+          addSolidColorFill(document, "BLUE JEAN (COLOR FILL)", 110, 142, 174)
+        ];
+        fills[0].move(restored, ElementPlacement.PLACEAFTER);
+        fills[1].move(restored, ElementPlacement.PLACEAFTER);
+        fills[2].move(restored, ElementPlacement.PLACEAFTER);
+        hideAll(document);
+        restored.visible = true;
+        exportPng(document, "artwork");
+        exportMaskView(document, workingMask, "mask");
+        exportLayerView(document, restored, fills[0], "preview_black");
+        exportLayerView(document, restored, fills[1], "preview_navy");
+        exportLayerView(document, restored, fills[2], "preview_blue_jean");
+        hideAll(document);
+        restored.visible = true;
+        document.activeLayer = restored;
+        message("PHOTOPEA_STRUCTURE_BUILT");
+        message("PHOTOPEA_MASK_VERIFIED");
+        message("PHOTOPEA_CHECKPOINT_READY");
+        if (${finalize ? "true" : "false"}) {
+          document.clearHistory();
+          message("PHOTOPEA_EXPORT:psd");
+          document.saveToOE("psd:true");
+        }
+      }
+      try { build(); } catch (error) { message("PHOTOPEA_STRUCTURE_FAILED:" + String(error)); }
     })();
   `;
 }
 
-function photopeaRoundTripScript(hasVariants) {
-  const variantChecks = hasVariants ? `
-        var restored = findLayer("RESTORED");
-        var withGaps = findLayer("WITH GAPS");
-        if (!restored || !withGaps) throw new Error("missing RESTORED/WITH GAPS layers");
-        document.activeLayer = restored;
-        selectRasterMaskChannel();
-        document.activeLayer = withGaps;
-        selectRasterMaskChannel();
-      ` : "";
+function photopeaRevisionScript(revisionId, { finalize = false } = {}) {
+  const safeRevisionId = JSON.stringify(String(revisionId).replace(/[^a-zA-Z0-9_.-]/g, "_"));
   return `
     (function () {
-      function cTID(value) {
-        return charIDToTypeID(value);
+      function cTID(value) { return charIDToTypeID(value); }
+      function sTID(value) { return stringIDToTypeID(value); }
+      function message(value) { app.echoToOE(value); }
+      function findLayer(document, name) {
+        var exact = null; var prefixed = null;
+        for (var index = document.layers.length - 1; index >= 0; index -= 1) {
+          var layerName = String(document.layers[index].name);
+          if (!exact && layerName === name) exact = document.layers[index];
+          var prefix = name + " ";
+          var basePrefix = name + " BASE";
+          if (!prefixed && layerName.slice(0, prefix.length) === prefix && layerName.slice(0, basePrefix.length) !== basePrefix) prefixed = document.layers[index];
+        }
+        return prefixed || exact || null;
       }
-      function selectRasterMaskChannel() {
+      function duplicateLayer(document, layer, name) {
+        document.activeLayer = layer;
         var descriptor = new ActionDescriptor();
         var reference = new ActionReference();
-        reference.putEnumerated(cTID("Chnl"), cTID("Chnl"), cTID("Msk "));
+        reference.putEnumerated(cTID("Lyr "), cTID("Ordn"), cTID("Trgt"));
         descriptor.putReference(cTID("null"), reference);
-        descriptor.putBoolean(cTID("MkVs"), false);
-        executeAction(cTID("slct"), descriptor, DialogModes.NO);
+        executeAction(cTID("Dplc"), descriptor, DialogModes.NO);
+        var duplicate = document.activeLayer;
+        duplicate.name = name;
+        return duplicate;
       }
-      try {
-        app.echoToOE("PHOTOPEA_ROUNDTRIP_START");
-        var document = app.activeDocument;
-        function findLayer(name) {
-          for (var index = 0; index < document.layers.length; index += 1) {
-            if (document.layers[index].name === name) return document.layers[index];
-          }
-          return null;
-        }
-        var artwork = findLayer("RESTORED");
-        var mask = findLayer("WORKING MASK");
-        var fills = [
-          "BLACK (COLOR FILL)",
-          "WHITE (COLOR FILL)",
-          "GRAY (COLOR FILL)",
-          "NAVY (COLOR FILL)",
-          "BLUE JEAN (COLOR FILL)"
-        ];
-        for (var fillIndex = 0; fillIndex < fills.length; fillIndex += 1) {
-          var fill = findLayer(fills[fillIndex]);
-          if (!fill) throw new Error("missing fill layer: " + fills[fillIndex]);
-        }
-        var withGaps = findLayer("WITH GAPS");
-        if (!artwork || !withGaps || !mask) throw new Error("missing RESTORED/WITH GAPS/WORKING MASK layers");
+      function copyLayer(fromDocument, toDocument, name, layer) {
+        app.activeDocument = fromDocument;
+        fromDocument.activeLayer = layer || fromDocument.artLayers[0];
+        fromDocument.selection.selectAll();
+        fromDocument.selection.copy();
+        app.activeDocument = toDocument;
+        toDocument.paste();
+        var pasted = toDocument.activeLayer;
+        pasted.name = name;
+        return pasted;
+      }
+      function selectAll(document) {
+        app.activeDocument = document;
+        var descriptor = new ActionDescriptor();
+        var selection = new ActionReference();
+        selection.putProperty(cTID("Chnl"), cTID("fsel"));
+        descriptor.putReference(cTID("null"), selection);
+        descriptor.putEnumerated(cTID("T   "), cTID("Ordn"), cTID("Al  "));
+        executeAction(cTID("setd"), descriptor, DialogModes.NO);
+      }
+      function deselect(document) {
+        app.activeDocument = document;
+        var descriptor = new ActionDescriptor();
+        var selection = new ActionReference();
+        selection.putProperty(cTID("Chnl"), cTID("fsel"));
+        descriptor.putReference(cTID("null"), selection);
+        descriptor.putEnumerated(cTID("T   "), cTID("Ordn"), cTID("None"));
+        executeAction(cTID("setd"), descriptor, DialogModes.NO);
+      }
+      function fillColor(document, red, green, blue) {
+        var color = new SolidColor();
+        color.rgb.red = red; color.rgb.green = green; color.rgb.blue = blue;
+        app.foregroundColor = color;
+        var descriptor = new ActionDescriptor();
+        descriptor.putEnumerated(sTID("using"), sTID("fillContents"), sTID("foregroundColor"));
+        descriptor.putUnitDouble(sTID("opacity"), sTID("percentUnit"), 100);
+        descriptor.putEnumerated(sTID("mode"), sTID("blendMode"), sTID("normal"));
+        executeAction(sTID("fill"), descriptor, DialogModes.NO);
+      }
+      function addLinkedRasterMask(document, artwork) {
         app.activeDocument = document;
         document.activeLayer = artwork;
-        selectRasterMaskChannel();
-        document.activeLayer = withGaps;
-        selectRasterMaskChannel();
-        ${variantChecks}
-        app.echoToOE("PHOTOPEA_ROUNDTRIP_VERIFIED");
+        var descriptor = new ActionDescriptor();
+        var reference = new ActionReference();
+        descriptor.putClass(cTID("Nw  "), cTID("Chnl"));
+        reference.putEnumerated(cTID("Chnl"), cTID("Chnl"), cTID("Msk "));
+        descriptor.putReference(cTID("At  "), reference);
+        descriptor.putEnumerated(cTID("Usng"), cTID("UsrM"), cTID("RvlS"));
+        executeAction(cTID("Mk  "), descriptor, DialogModes.NO);
+      }
+      function selectLayerLuminance(document, layer) {
+        app.activeDocument = document;
+        hideAll(document);
+        layer.visible = true;
+        document.activeLayer = layer;
+        var descriptor = new ActionDescriptor();
+        var selection = new ActionReference();
+        selection.putProperty(cTID("Chnl"), cTID("fsel"));
+        var channel = new ActionReference();
+        channel.putEnumerated(cTID("Chnl"), cTID("Chnl"), cTID("Rd  "));
+        descriptor.putReference(cTID("null"), selection);
+        descriptor.putReference(cTID("T   "), channel);
+        executeAction(cTID("setd"), descriptor, DialogModes.NO);
+      }
+      function applyRasterMaskFromPixels(document, maskSource, artwork) {
+        selectLayerLuminance(document, maskSource);
+        addLinkedRasterMask(document, artwork);
+        deselect(document);
+        maskSource.visible = false;
+      }
+      function addSolidColorFill(document, name, red, green, blue) {
+        app.activeDocument = document;
+        var descriptor = new ActionDescriptor();
+        var reference = new ActionReference();
+        reference.putClass(sTID("contentLayer"));
+        descriptor.putReference(cTID("null"), reference);
+        var content = new ActionDescriptor();
+        var solid = new ActionDescriptor();
+        var color = new ActionDescriptor();
+        color.putDouble(cTID("Rd  "), red); color.putDouble(cTID("Grn "), green); color.putDouble(cTID("Bl  "), blue);
+        solid.putObject(cTID("Clr "), cTID("RGBC"), color);
+        content.putObject(cTID("Type"), sTID("solidColorLayer"), solid);
+        descriptor.putObject(cTID("Usng"), sTID("contentLayer"), content);
+        executeAction(cTID("Mk  "), descriptor, DialogModes.NO);
+        var layer = document.activeLayer;
+        layer.name = name;
+        layer.visible = false;
+        return layer;
+      }
+      function hideAll(document) {
+        app.activeDocument = document;
+        for (var index = 0; index < document.layers.length; index += 1) document.layers[index].visible = false;
+      }
+      function exportPng(document, label) {
+        app.activeDocument = document;
+        message("PHOTOPEA_EXPORT:" + label);
+        document.saveToOE("png");
+      }
+      function exportLayerView(document, restored, layer, label) {
+        hideAll(document);
+        layer.visible = true;
+        if (restored) restored.visible = true;
+        exportPng(document, label);
+      }
+      function exportMaskView(document, maskLayer, label) {
+        hideAll(document);
+        maskLayer.visible = true;
+        document.activeLayer = maskLayer;
+        exportPng(document, label);
+      }
+      function buildRevision() {
+        var outputDocument = null;
+        for (var documentIndex = 0; documentIndex < app.documents.length; documentIndex += 1) {
+          if (findLayer(app.documents[documentIndex], "SOURCE BACKUP")) outputDocument = app.documents[documentIndex];
+        }
+        var sourceDocument = null;
+        for (var sourceIndex = 0; sourceIndex < app.documents.length; sourceIndex += 1) {
+          if (app.documents[sourceIndex].name === "SOURCE INPUT") sourceDocument = app.documents[sourceIndex];
+        }
+        var carrierDocument = null;
+        for (var carrierIndex = 0; carrierIndex < app.documents.length; carrierIndex += 1) {
+          var candidate = app.documents[carrierIndex];
+          if (candidate !== outputDocument && candidate !== sourceDocument && candidate.artLayers && candidate.artLayers.length) carrierDocument = candidate;
+        }
+        if (!sourceDocument || !carrierDocument) throw new Error("source and revision mask documents are required");
+        var source = sourceDocument.artLayers[0];
+        var carrier = carrierDocument.artLayers[0];
+        if (!source || !carrier) throw new Error("source or revision carrier layer is missing");
+        app.activeDocument = sourceDocument;
+        var document = sourceDocument;
+        if (outputDocument && outputDocument !== sourceDocument && outputDocument !== carrierDocument) outputDocument.close(SaveOptions.DONOTSAVECHANGES);
+        source.name = "SOURCE BACKUP";
+        source.visible = true;
+        var maskCarrier = copyLayer(carrierDocument, document, "MASK CARRIER " + ${safeRevisionId}, carrier);
+        source.visible = false;
+        maskCarrier.name = "WORKING MASK " + ${safeRevisionId};
+        maskCarrier.visible = false;
+        carrierDocument.close(SaveOptions.DONOTSAVECHANGES);
+        var workingMask = maskCarrier;
+        var restored = duplicateLayer(document, source, "RESTORED " + ${safeRevisionId});
+        applyRasterMaskFromPixels(document, maskCarrier, restored);
+        var withGaps = duplicateLayer(document, source, "WITH GAPS " + ${safeRevisionId});
+        applyRasterMaskFromPixels(document, maskCarrier, withGaps);
+        var maskBase = document.artLayers.add();
+        maskBase.name = "WORKING MASK BASE " + ${safeRevisionId}; maskBase.visible = false;
+        selectAll(document); fillColor(document, 0, 0, 0); deselect(document);
+        var fills = [
+          addSolidColorFill(document, "BLACK (COLOR FILL) " + ${safeRevisionId}, 0, 0, 0),
+          addSolidColorFill(document, "NAVY (COLOR FILL) " + ${safeRevisionId}, 54, 75, 99),
+          addSolidColorFill(document, "BLUE JEAN (COLOR FILL) " + ${safeRevisionId}, 110, 142, 174)
+        ];
+        fills[0].move(restored, ElementPlacement.PLACEAFTER);
+        fills[1].move(restored, ElementPlacement.PLACEAFTER);
+        fills[2].move(restored, ElementPlacement.PLACEAFTER);
+        hideAll(document); restored.visible = true; exportPng(document, "artwork");
+        exportMaskView(document, workingMask, "mask");
+        exportLayerView(document, restored, fills[0], "preview_black");
+        exportLayerView(document, restored, fills[1], "preview_navy");
+        exportLayerView(document, restored, fills[2], "preview_blue_jean");
+        document.activeLayer = restored;
+        message("PHOTOPEA_CHECKPOINT_READY");
+        if (${finalize ? "true" : "false"}) { document.clearHistory(); message("PHOTOPEA_EXPORT:psd"); document.saveToOE("psd:true"); }
+      }
+      try { buildRevision(); } catch (error) { message("PHOTOPEA_REVISION_FAILED:" + String(error)); }
+    })();
+  `;
+}
+
+function photopeaSavePsdScript() {
+  return `
+    (function () {
+      try {
+        app.activeDocument.clearHistory();
+        app.echoToOE("PHOTOPEA_EXPORT:psd");
+        app.activeDocument.saveToOE("psd:true");
       } catch (error) {
-        app.echoToOE("PHOTOPEA_STRUCTURE_FAILED:roundtrip:" + String(error));
+        app.echoToOE("PHOTOPEA_FINALIZE_FAILED:" + String(error));
       }
     })();
   `;
 }
 
-async function exportViaPhotopea(files, options = {}) {
-  const launchOptions = { headless: true };
-  if (process.env.PHOTOPEA_CHROMIUM_EXECUTABLE_PATH) {
-    launchOptions.executablePath = process.env.PHOTOPEA_CHROMIUM_EXECUTABLE_PATH;
+function photopeaRoundTripScript(label) {
+  const safeLabel = JSON.stringify(String(label));
+  return `
+    (function () {
+      function message(value) { app.echoToOE(value); }
+      function findLayer(document, name) {
+        var exact = null; var prefixed = null;
+        for (var index = document.layers.length - 1; index >= 0; index -= 1) {
+          var layerName = String(document.layers[index].name);
+          if (!exact && layerName === name) exact = document.layers[index];
+          var prefix = name + " ";
+          var basePrefix = name + " BASE";
+          if (!prefixed && layerName.slice(0, prefix.length) === prefix && layerName.slice(0, basePrefix.length) !== basePrefix) prefixed = document.layers[index];
+        }
+        return prefixed || exact || null;
+      }
+      function hideAll(document) {
+        for (var index = 0; index < document.layers.length; index += 1) document.layers[index].visible = false;
+      }
+      function showOnly(document, visibleLayers, activeLayer) {
+        app.activeDocument = document;
+        for (var visibleIndex = 0; visibleIndex < visibleLayers.length; visibleIndex += 1) visibleLayers[visibleIndex].visible = true;
+        document.activeLayer = activeLayer;
+        for (var layerIndex = 0; layerIndex < document.layers.length; layerIndex += 1) {
+          var keep = false;
+          for (var keepIndex = 0; keepIndex < visibleLayers.length; keepIndex += 1) if (document.layers[layerIndex].name === visibleLayers[keepIndex].name) keep = true;
+          if (!keep) document.layers[layerIndex].visible = false;
+        }
+      }
+      function exportPng(document, label) {
+        message("PHOTOPEA_EXPORT:" + label);
+        document.saveToOE("png");
+      }
+      function exportMaskView(document, maskLayer, label) {
+        showOnly(document, [maskLayer], maskLayer);
+        exportPng(document, label);
+      }
+      try {
+        var document = app.activeDocument;
+        var workingMask = document.layers[0];
+        var restored = document.layers[1];
+        var blueJean = document.layers[2];
+        var navy = document.layers[3];
+        var black = document.layers[4];
+        var maskBase = document.layers[5];
+        var withGaps = document.layers[6];
+        var source = document.layers[7];
+        if (!source || !restored || !withGaps || !maskBase || !workingMask || !black || !navy || !blueJean) throw new Error("required layer missing");
+        var layerOrder = [workingMask, restored, blueJean, navy, black, maskBase, withGaps, source];
+        var expectedNames = ["WORKING MASK ", "RESTORED ", "BLUE JEAN (COLOR FILL) ", "NAVY (COLOR FILL) ", "BLACK (COLOR FILL) ", "WORKING MASK BASE ", "WITH GAPS ", "SOURCE BACKUP"];
+        for (var orderIndex = 0; orderIndex < expectedNames.length; orderIndex += 1) if (String(layerOrder[orderIndex].name).slice(0, expectedNames[orderIndex].length) !== expectedNames[orderIndex]) throw new Error("round-trip layer order mismatch at " + orderIndex + ": " + String(layerOrder[orderIndex].name));
+        var label = ${safeLabel};
+        if (label === "artwork") { showOnly(document, [restored], restored); exportPng(document, label); }
+        else if (label === "mask") exportMaskView(document, workingMask, label);
+        else if (label === "preview_black") { showOnly(document, [black, restored], restored); exportPng(document, label); }
+        else if (label === "preview_navy") { showOnly(document, [navy, restored], restored); exportPng(document, label); }
+        else if (label === "preview_blue_jean") { showOnly(document, [blueJean, restored], restored); exportPng(document, label); }
+        else throw new Error("unsupported round-trip export label: " + label);
+      } catch (error) { message("PHOTOPEA_ROUNDTRIP_FAILED:" + String(error)); }
+    })();
+  `;
+}
+
+function paeth(a, b, c) {
+  const p = a + b - c;
+  const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+}
+
+function decodePng(buffer) {
+  const input = Buffer.from(buffer);
+  if (input.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new Error("not a PNG");
+  let offset = 8; let width = 0; let height = 0; let colorType = 0; let bitDepth = 0; const idat = []; let palette = null; let transparency = null;
+  while (offset < input.length) {
+    const length = input.readUInt32BE(offset); const type = input.subarray(offset + 4, offset + 8).toString("ascii");
+    const data = input.subarray(offset + 8, offset + 8 + length); offset += length + 12;
+    if (type === "IHDR") { width = data.readUInt32BE(0); height = data.readUInt32BE(4); bitDepth = data[8]; colorType = data[9]; }
+    if (type === "PLTE") palette = data;
+    if (type === "tRNS") transparency = data;
+    if (type === "IDAT") idat.push(data);
+    if (type === "IEND") break;
   }
-  const browser = await chromium.launch(launchOptions);
-  try {
-    const page = await browser.newPage();
-    let scriptStarted = false;
-    let rejectExport = null;
-    page.on("console", (message) => console.log(JSON.stringify({ event_type: "PhotopeaConsole", type: message.type(), text: message.text() })));
-    page.on("pageerror", (error) => {
-      const message = String(error);
-      console.log(JSON.stringify({ event_type: "PhotopeaPageError", message }));
-      if (scriptStarted && rejectExport) rejectExport(new Error(`Photopea script failed: ${message}`));
-    });
-    page.on("requestfailed", (request) => console.log(JSON.stringify({ event_type: "PhotopeaRequestFailed", url: request.url(), error: request.failure()?.errorText })));
-    const result = await new Promise(async (resolve, reject) => {
-      rejectExport = reject;
-      const exportTimeoutMs = Number(options.timeoutMs || process.env.PHOTOPEA_EXPORT_TIMEOUT_MS || 300_000);
-      const timer = setTimeout(() => reject(new Error("photopea export timed out")), exportTimeoutMs);
-      let structureBuilt = false;
-      let maskVerified = false;
-      let roundTripStarted = false;
-      let returnedPayload = null;
-      let binaryBuffer = null;
-      let binaryOffset = 0;
-      await page.exposeFunction("notePhotopeaScriptStarted", () => { scriptStarted = true; });
-      await page.exposeFunction("getPhotopeaFile", (index) => Array.from(files[index].buffer));
-      await page.exposeFunction("notePhotopeaStructureBuilt", () => { structureBuilt = true; });
-      await page.exposeFunction("notePhotopeaMaskVerified", () => { maskVerified = true; });
-      await page.exposeFunction("beginPhotopeaBinary", (length) => {
-        binaryBuffer = Buffer.alloc(Number(length));
-        binaryOffset = 0;
-      });
-      await page.exposeFunction("receivePhotopeaBinaryChunk", (values) => {
-        const chunk = Buffer.from(values);
-        if (!binaryBuffer || binaryOffset + chunk.length > binaryBuffer.length) {
-          throw new Error("Photopea binary chunk exceeds declared payload length");
-        }
-        chunk.copy(binaryBuffer, binaryOffset);
-        binaryOffset += chunk.length;
-      });
-      await page.exposeFunction("finishPhotopeaBinary", async () => {
-        if (!binaryBuffer || binaryOffset !== binaryBuffer.length) {
-          throw new Error("Photopea binary payload is incomplete");
-        }
-        const payload = binaryBuffer;
-        if (!structureBuilt || !maskVerified) {
-          clearTimeout(timer);
-          reject(new Error("Photopea returned PSD before structure verification"));
-          return;
-        }
-        if (roundTripStarted) {
-          clearTimeout(timer);
-          reject(new Error("Photopea returned an unexpected second binary payload"));
-          return;
-        }
-        roundTripStarted = true;
-        returnedPayload = payload;
-        if (skipRoundTrip) {
-          clearTimeout(timer);
-          resolve(returnedPayload);
-          return;
-        }
-        await page.evaluate((roundTripLength) => window.startPhotopeaRoundTrip(roundTripLength), payload.length);
-      });
-      await page.exposeFunction("getPhotopeaRoundTripChunk", (offset, length) => Array.from(returnedPayload.subarray(Number(offset), Number(offset) + Number(length))));
-      await page.exposeFunction("receivePhotopeaVerified", () => {
-        clearTimeout(timer);
-        resolve(returnedPayload);
-      });
-      await page.exposeFunction("receivePhotopeaFailure", (message) => {
-        clearTimeout(timer);
-        reject(new Error(message));
-      });
-      // Photopea needs a real same-origin outer environment. Using about:blank
-      // makes its localStorage access fail before it can emit the ready event.
-      await page.goto(`http://127.0.0.1:${port}/healthz`);
-      await page.setContent(`
-        <!doctype html><html><body>
-          <iframe id="photopea" style="width:1px;height:1px;border:0"
-            src="https://www.photopea.com/#${encodeURIComponent(JSON.stringify({}))}"></iframe>
-          <script>
-            const frame = document.getElementById('photopea');
-            let phase = 'boot';
-            let fileIndex = 0;
-            async function sendFile(index) {
-              const values = await window.getPhotopeaFile(index);
-              const buffer = new Uint8Array(values).buffer;
-              frame.contentWindow.postMessage(buffer, '*', [buffer]);
-            }
-            window.addEventListener('message', async (event) => {
-              if (event.source !== frame.contentWindow) return;
-              if (typeof event.data === 'string') {
-                console.log('PHOTOPEA_MESSAGE:' + event.data);
-                if (event.data.indexOf('PHOTOPEA_STRUCTURE_FAILED:') === 0) {
-                  window.receivePhotopeaFailure(event.data);
-                  return;
-                }
-                if (event.data === 'PHOTOPEA_STRUCTURE_BUILT') window.notePhotopeaStructureBuilt();
-                if (event.data.indexOf('PHOTOPEA_MASK_VERIFIED') === 0) window.notePhotopeaMaskVerified();
-                if (event.data === 'PHOTOPEA_ROUNDTRIP_VERIFIED') {
-                  window.receivePhotopeaVerified();
-                  return;
-                }
-              }
-              if (event.data instanceof ArrayBuffer) {
-                const chunkSize = 4 * 1024 * 1024;
-                window.beginPhotopeaBinary(event.data.byteLength);
-                for (let offset = 0; offset < event.data.byteLength; offset += chunkSize) {
-                  const length = Math.min(chunkSize, event.data.byteLength - offset);
-                  await window.receivePhotopeaBinaryChunk(Array.from(new Uint8Array(event.data, offset, length)));
-                }
-                await window.finishPhotopeaBinary();
-                return;
-              }
-              if (event.data !== 'done') return;
-              if (phase === 'boot') {
-                phase = 'files';
-                sendFile(fileIndex);
-              } else if (phase === 'files' && fileIndex < ${files.length - 1}) {
-                fileIndex += 1;
-                sendFile(fileIndex);
-              } else if (phase === 'files') {
-                phase = 'script';
-                await window.notePhotopeaScriptStarted();
-                frame.contentWindow.postMessage(${JSON.stringify(options.script || photopeaScript(files.length >= 7))}, '*');
-              } else if (phase === 'roundtrip-file') {
-                phase = 'roundtrip-script';
-                frame.contentWindow.postMessage(${JSON.stringify(photopeaRoundTripScript(files.length >= 7))}, '*');
-              }
-            });
-            window.startPhotopeaRoundTrip = async function (length) {
-              const values = new Uint8Array(length);
-              const chunkSize = 4 * 1024 * 1024;
-              for (let offset = 0; offset < length; offset += chunkSize) {
-                const chunk = await window.getPhotopeaRoundTripChunk(offset, Math.min(chunkSize, length - offset));
-                values.set(chunk, offset);
-              }
-              const buffer = values.buffer;
-              phase = 'roundtrip-file';
-              frame.contentWindow.postMessage(buffer, '*', [buffer]);
-            };
-          </script>
-        </body></html>
-      `, { waitUntil: "domcontentloaded", timeout: 120_000 });
-    });
-    if (!result.subarray(0, 4).equals(Buffer.from("8BPS"))) {
-      throw new Error("Photopea returned a non-PSD payload");
+  if (![0, 2, 3, 4, 6].includes(colorType) || ![1, 2, 4, 8, 16].includes(bitDepth) || (colorType === 3 && ![1, 2, 4, 8].includes(bitDepth))) throw new Error(`unsupported PNG encoding: color_type=${colorType}, bit_depth=${bitDepth}`);
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType];
+  const bytesPerSample = bitDepth === 16 ? 2 : 1; const bytesPerPixel = colorType === 3 ? 1 : channels * bytesPerSample; const stride = colorType === 3 ? Math.ceil(width * bitDepth / 8) : width * bytesPerPixel; const raw = inflateSync(Buffer.concat(idat)); const rows = Buffer.alloc(height * stride); let cursor = 0;
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[cursor++]; const row = rows.subarray(y * stride, (y + 1) * stride); const prior = y ? rows.subarray((y - 1) * stride, y * stride) : null;
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= bytesPerPixel ? row[x - bytesPerPixel] : 0; const up = prior ? prior[x] : 0; const upLeft = prior && x >= bytesPerPixel ? prior[x - bytesPerPixel] : 0;
+      const value = raw[cursor++]; row[x] = (value + (filter === 1 ? left : filter === 2 ? up : filter === 3 ? Math.floor((left + up) / 2) : filter === 4 ? paeth(left, up, upLeft) : 0)) & 255;
     }
-    return result;
-  } finally {
-    await browser.close();
+  }
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    const target = i * 4;
+    if (colorType === 3) {
+      const pixelX = i % width; const pixelY = Math.floor(i / width); const packed = rows[pixelY * stride + Math.floor(pixelX * bitDepth / 8)]; const shift = 8 - bitDepth - ((pixelX * bitDepth) % 8); const index = (packed >> shift) & ((1 << bitDepth) - 1); const paletteOffset = index * 3;
+      rgba[target] = palette?.[paletteOffset] ?? 0; rgba[target + 1] = palette?.[paletteOffset + 1] ?? 0; rgba[target + 2] = palette?.[paletteOffset + 2] ?? 0; rgba[target + 3] = transparency?.[index] ?? 255;
+      continue;
+    }
+    const source = i * bytesPerPixel; const sample = (position) => rows[position];
+    if (colorType === 6) { rgba[target] = sample(source); rgba[target + 1] = sample(source + bytesPerSample); rgba[target + 2] = sample(source + bytesPerSample * 2); rgba[target + 3] = sample(source + bytesPerSample * 3); }
+    else if (colorType === 2) { rgba[target] = sample(source); rgba[target + 1] = sample(source + bytesPerSample); rgba[target + 2] = sample(source + bytesPerSample * 2); rgba[target + 3] = 255; }
+    else if (colorType === 4) { rgba[target] = sample(source); rgba[target + 1] = sample(source); rgba[target + 2] = sample(source); rgba[target + 3] = sample(source + bytesPerSample); }
+    else { const value = sample(source); rgba[target] = value; rgba[target + 1] = value; rgba[target + 2] = value; rgba[target + 3] = 255; }
+  }
+  return { width, height, rgba };
+}
+
+function sha256(value) { return crypto.createHash("sha256").update(value).digest("hex"); }
+function maskValue(image, offset) {
+  const red = image.rgba[offset]; const green = image.rgba[offset + 1]; const blue = image.rgba[offset + 2]; const alpha = image.rgba[offset + 3];
+  if (red === green && green === blue && alpha === 255) return red;
+  if (red === 255 && green === 255 && blue === 255) return alpha;
+  throw new Error(`unsupported submitted mask pixel representation at ${offset / 4}: rgba=${red},${green},${blue},${alpha}`);
+}
+function rasterMaskHash(carrierBytes) {
+  const carrier = decodePng(carrierBytes);
+  const mask = Buffer.alloc(carrier.width * carrier.height);
+  for (let index = 0; index < mask.length; index += 1) mask[index] = maskValue(carrier, index * 4);
+  return sha256(mask);
+}
+
+function parseRasterRevision(raw) {
+  const revision = typeof raw === "string" ? JSON.parse(raw || "{}") : raw;
+  const hashFields = ["source_sha256", "checkpoint_sha256", "base_mask_sha256", "result_mask_sha256"];
+  if (revision && typeof revision === "object" && ["subject_polygons", "remove_polygons", "add_polygons", "selection_path"].some((field) => Object.prototype.hasOwnProperty.call(revision, field))) throw new Error("polygon mask plans are unsupported");
+  if (!revision || typeof revision !== "object" || typeof revision.revision_id !== "string" || !revision.revision_id || revision.operation !== "replace_mask" || hashFields.some((field) => !/^[0-9a-f]{64}$/.test(String(revision[field] || ""))) || typeof revision.confidence !== "number" || revision.confidence < 0 || revision.confidence > 1) throw new Error("invalid raster mask revision");
+  return revision;
+}
+function comparePixels(left, right, tolerance = 0) {
+  if (left.width !== right.width || left.height !== right.height || left.rgba.length !== right.rgba.length) return { equal: false, changed: -1 };
+  let changed = 0;
+  for (let index = 0; index < left.rgba.length; index += 1) if (Math.abs(left.rgba[index] - right.rgba[index]) > tolerance) changed += 1;
+  return { equal: changed === 0, changed };
+}
+
+function expectedComposite(source, carrier, background) {
+  const rgba = Buffer.alloc(source.rgba.length);
+  for (let index = 0; index < source.width * source.height; index += 1) {
+    const sourceOffset = index * 4;
+    const alpha = maskValue(carrier, sourceOffset) / 255;
+    rgba[sourceOffset] = Math.round(source.rgba[sourceOffset] * alpha + background[0] * (1 - alpha));
+    rgba[sourceOffset + 1] = Math.round(source.rgba[sourceOffset + 1] * alpha + background[1] * (1 - alpha));
+    rgba[sourceOffset + 2] = Math.round(source.rgba[sourceOffset + 2] * alpha + background[2] * (1 - alpha));
+    rgba[sourceOffset + 3] = 255;
+  }
+  return { width: source.width, height: source.height, rgba };
+}
+
+function canonicalMaskValue(image, offset) {
+  const red = image.rgba[offset]; const green = image.rgba[offset + 1]; const blue = image.rgba[offset + 2]; const alpha = image.rgba[offset + 3];
+  if (red === green && green === blue && alpha === 255) return red;
+  if (red === 255 && green === 255 && blue === 255) return alpha;
+  throw new Error(`unsupported mask pixel representation at ${offset / 4}: rgba=${red},${green},${blue},${alpha}`);
+}
+
+function validatePixelEvidence(inputFiles, checkpoints, roundTrip, revision) {
+  const source = decodePng(inputFiles.source);
+  const carrier = decodePng(inputFiles.mask);
+  const required = ["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"];
+  for (const label of required) if (!checkpoints[label] || !roundTrip[label]) throw new Error(`missing pixel evidence: ${label}`);
+  const mask = checkpoints.mask;
+  const rtMask = roundTrip.mask;
+  const maskCompare = comparePixels(mask, rtMask, 0);
+  if (!maskCompare.equal) throw new Error("reopened WORKING MASK pixels differ from checkpoint");
+  if (source.width !== carrier.width || source.height !== carrier.height || source.width !== mask.width || source.height !== mask.height) throw new Error("Photopea pixel dimensions differ");
+  for (let index = 0; index < source.width * source.height; index += 1) {
+    const acceptedMaskValue = maskValue(carrier, index * 4);
+    const exportedMaskValue = canonicalMaskValue(mask, index * 4);
+    if (acceptedMaskValue !== exportedMaskValue) throw new Error(`WORKING MASK pixels differ from submitted raster mask at ${index}: submitted=${acceptedMaskValue}, canonical_mask=${exportedMaskValue}`);
+    const artworkOffset = index * 4;
+    const exportedArtwork = checkpoints.artwork.rgba;
+    const exportedAlpha = exportedArtwork[artworkOffset + 3];
+    const expectedRgb = acceptedMaskValue === 0 ? [0, 0, 0] : Array.from(source.rgba.subarray(artworkOffset, artworkOffset + 3));
+    const rgbMatches = expectedRgb.every((channel, channelIndex) => exportedArtwork[artworkOffset + channelIndex] === channel);
+    const alphaMatches = acceptedMaskValue === exportedAlpha;
+    if (!rgbMatches || !alphaMatches || (acceptedMaskValue === 0 && exportedAlpha !== 0)) {
+      throw new Error(`transparent artwork mismatch at ${index}: source=${Array.from(source.rgba.subarray(artworkOffset, artworkOffset + 4)).join(",")}, exported=${Array.from(exportedArtwork.subarray(artworkOffset, artworkOffset + 4)).join(",")}, accepted_mask=${acceptedMaskValue}`);
+    }
+  }
+  const expectedPreviews = {
+    preview_black: [0, 0, 0],
+    preview_navy: [54, 75, 99],
+    preview_blue_jean: [110, 142, 174],
+  };
+  for (const [label, background] of Object.entries(expectedPreviews)) {
+    const previewCheck = comparePixels(expectedComposite(source, carrier, background), checkpoints[label], 3);
+    if (!previewCheck.equal) throw new Error(`${label} pixels differ from accepted source/mask render: ${previewCheck.changed}`);
+  }
+  for (const label of required) if (!comparePixels(checkpoints[label], roundTrip[label], 0).equal) throw new Error(`reopened ${label} pixels differ from checkpoint`);
+  return {
+    source_sha256: revision.source_sha256,
+    result_mask_sha256: revision.result_mask_sha256,
+    checkpoint_sha256: sha256(Buffer.concat(required.map((label) => checkpoints[label].rgba))),
+    artwork_sha256: sha256(checkpoints.artwork.rgba),
+    preview_sha256: ["preview_black", "preview_navy", "preview_blue_jean"].map((label) => sha256(checkpoints[label].rgba)),
+    reopened: true,
+    required_layers: ["SOURCE BACKUP", "RESTORED", "WITH GAPS", "WORKING MASK", "BLACK (COLOR FILL)", "NAVY (COLOR FILL)", "BLUE JEAN (COLOR FILL)"],
+  };
+}
+
+function photopeaOuterPage(resultToken, inputTokens, initialScript, authorization) {
+  return `
+    <!doctype html><html><body><iframe id="photopea" style="width:1px;height:1px;border:0" src="https://www.photopea.com/#${encodeURIComponent(JSON.stringify({}))}"></iframe>
+    <script>
+      const frame = document.getElementById('photopea');
+      let phase = 'boot'; let fileIndex = 0; let exportLabels = []; let pendingScript = null; let roundtripIndex = 0;
+      const bridgeAuthorization = ${JSON.stringify(authorization || '')};
+      const initialUrls = ['/v1/photopea/blob/${inputTokens.source}', '/v1/photopea/blob/${inputTokens.mask}'];
+      let revisionUrls = [];
+      const initialScript = ${JSON.stringify(initialScript)};
+      const roundtripScripts = ${JSON.stringify(["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"].map((label) => photopeaRoundTripScript(label)))};
+      async function sendFile(index) { const buffer = await fetch(initialUrls[index]).then((response) => response.arrayBuffer()); frame.contentWindow.postMessage(buffer, '*', [buffer]); }
+      function internalHeaders(contentType) { const headers = { 'Content-Type': contentType }; if (bridgeAuthorization) headers.Authorization = bridgeAuthorization; return headers; }
+      async function receiveBinary(buffer) {
+        const binaryLabel = exportLabels.shift() || '';
+        await fetch('/v1/photopea/result/${resultToken}', { method: 'POST', headers: Object.assign(internalHeaders('application/octet-stream'), { 'X-Photopea-Label': binaryLabel }), body: buffer });
+        if (phase === 'roundtrip-export') {
+          if (roundtripIndex < roundtripScripts.length - 1) {
+            roundtripIndex += 1;
+            frame.contentWindow.postMessage(roundtripScripts[roundtripIndex], '*');
+          } else {
+            phase = 'roundtrip-verify';
+            frame.contentWindow.postMessage('app.echoToOE("PHOTOPEA_ROUNDTRIP_VERIFIED");', '*');
+          }
+        }
+      }
+      async function signal(path, body) { await fetch('/v1/photopea/' + path + '/${resultToken}', { method: 'POST', headers: internalHeaders('text/plain'), body: body || '' }); }
+      window.startPhotopeaRoundTrip = async function (id) { const buffer = await fetch('/v1/photopea/blob/' + id).then((response) => response.arrayBuffer()); phase = 'roundtrip-file'; frame.contentWindow.postMessage(buffer, '*', [buffer]); };
+      async function sendRevisionFile(index) { const buffer = await fetch(revisionUrls[index]).then((response) => response.arrayBuffer()); frame.contentWindow.postMessage(buffer, '*', [buffer]); }
+      window.startRevision = async function (maskId, sourceId, script) { pendingScript = script; revisionUrls = ['/v1/photopea/blob/' + sourceId, '/v1/photopea/blob/' + maskId]; phase = 'revision-close'; frame.contentWindow.postMessage('while (app.documents.length > 0) app.documents[0].close(SaveOptions.DONOTSAVECHANGES);', '*'); };
+      window.startFinal = function (script) { phase = 'final-script'; frame.contentWindow.postMessage(script, '*'); };
+      window.addEventListener('message', async (event) => {
+        if (event.source !== frame.contentWindow) return;
+        if (typeof event.data === 'string') {
+          console.log('PHOTOPEA_MESSAGE:' + event.data);
+          if (/^PHOTOPEA_(STRUCTURE|REVISION|FINALIZE|ROUNDTRIP)_FAILED:/.test(event.data)) { await signal('failure', event.data); return; }
+          if (event.data.indexOf('PHOTOPEA_EXPORT:') === 0) { exportLabels.push(event.data.slice('PHOTOPEA_EXPORT:'.length)); return; }
+          if (event.data === 'PHOTOPEA_CHECKPOINT_READY') { await signal('checkpoint'); return; }
+          if (event.data === 'PHOTOPEA_ROUNDTRIP_VERIFIED') { await signal('done'); return; }
+        }
+        if (event.data instanceof ArrayBuffer) { await receiveBinary(event.data); return; }
+        if (event.data !== 'done') return;
+        if (phase === 'boot') { phase = 'files'; await sendFile(fileIndex); }
+        else if (phase === 'files' && fileIndex < 1) { fileIndex += 1; await sendFile(fileIndex); }
+        else if (phase === 'files') { phase = 'script'; frame.contentWindow.postMessage(initialScript, '*'); }
+        else if (phase === 'revision-close') { phase = 'revision-source'; await sendRevisionFile(0); }
+        else if (phase === 'revision-source') { phase = 'revision-source-mark'; frame.contentWindow.postMessage('app.activeDocument.name = "SOURCE INPUT";', '*'); }
+        else if (phase === 'revision-source-mark') { phase = 'revision-mask'; await sendRevisionFile(1); }
+        else if (phase === 'revision-mask') { phase = 'revision-script'; frame.contentWindow.postMessage(pendingScript, '*'); }
+        else if (phase === 'roundtrip-file') { phase = 'roundtrip-export'; roundtripIndex = 0; frame.contentWindow.postMessage(roundtripScripts[roundtripIndex], '*'); }
+      });
+    </script></body></html>`;
+}
+
+class PhotopeaLiveSession {
+  constructor(browser, page, resultToken, inputFiles, revision, timeoutMs) {
+    this.browser = browser; this.page = page; this.resultToken = resultToken;
+    this.inputFiles = inputFiles; this.currentRevision = revision; this.timeoutMs = timeoutMs;
+    this.checkpoints = {}; this.roundTrip = {}; this.psd = null; this.phase = "boot";
+    this.checkpointSequence = 0; this.checkpointWaiters = []; this.doneWaiters = []; this.doneSignaled = false;
+  }
+
+  static async open(inputFiles, revision, options = {}) {
+    const launchOptions = { headless: true };
+    if (process.env.PHOTOPEA_CHROMIUM_EXECUTABLE_PATH) launchOptions.executablePath = process.env.PHOTOPEA_CHROMIUM_EXECUTABLE_PATH;
+    const browser = await chromium.launch(launchOptions);
+    const timeoutMs = Number(options.timeoutMs || process.env.PHOTOPEA_EXPORT_TIMEOUT_MS || 300_000);
+    const resultToken = crypto.randomUUID();
+    try {
+      const page = await browser.newPage();
+      const session = new PhotopeaLiveSession(browser, page, resultToken, inputFiles, revision, timeoutMs);
+      await session.start();
+      return session;
+    } catch (error) { await browser.close(); throw error; }
+  }
+
+  async start() {
+    const timer = setTimeout(() => this.fail(new Error("photopea session timed out")), this.timeoutMs);
+    this.timer = timer;
+    this.page.on("console", (message) => console.log(JSON.stringify({ event_type: "PhotopeaConsole", type: message.type(), text: message.text() })));
+    this.page.on("pageerror", (error) => { const message = String(error); console.log(JSON.stringify({ event_type: "PhotopeaPageError", message, stack: error.stack })); });
+    this.page.on("requestfailed", (request) => console.log(JSON.stringify({ event_type: "PhotopeaRequestFailed", url: request.url(), error: request.failure()?.errorText })));
+    app.on(`photopea:${this.resultToken}:binary`, this.onBinary = ({ label, buffer }) => this.handleBinary(label, buffer));
+    app.on(`photopea:${this.resultToken}:checkpoint`, this.onCheckpoint = () => this.markCheckpointReady());
+    app.on(`photopea:${this.resultToken}:failure`, this.onFailure = (message) => this.fail(new Error(message)));
+    app.on(`photopea:${this.resultToken}:done`, this.onDone = () => this.signalDone());
+    await this.page.goto(`http://127.0.0.1:${port}/healthz`, { waitUntil: "domcontentloaded", timeout: 120_000 });
+    const inputTokens = { source: transfer(this.inputFiles.source), mask: transfer(this.inputFiles.mask) };
+    const checkpoint = this.waitForCheckpoint(0);
+    const initialScript = photopeaRasterMaskScript({ finalize: false });
+    await this.page.setContent(photopeaOuterPage(this.resultToken, inputTokens, initialScript, token ? `Bearer ${token}` : ""), { waitUntil: "domcontentloaded", timeout: 120_000 });
+    await checkpoint;
+  }
+
+  handleBinary(label, buffer) {
+    console.log(JSON.stringify({ event_type: "PhotopeaBinaryReceived", label, phase: this.phase, bytes: buffer.length }));
+    if (label === "psd") {
+      this.psd = buffer; this.phase = "roundtrip-file";
+      const psdToken = transfer(buffer);
+      this.page.evaluate((id) => window.startPhotopeaRoundTrip(id), psdToken).catch((error) => this.fail(error));
+    } else {
+      const labels = ["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"];
+      const checkpointStillArriving = this.checkpointPending || labels.some((item) => !this.checkpoints[item]);
+      const isRoundTrip = (this.phase === "roundtrip-file" || this.phase === "roundtrip-export" || this.phase === "roundtrip-verify") && !checkpointStillArriving;
+      if (isRoundTrip) {
+        this.roundTrip[label] = decodePng(buffer);
+        if (labels.every((item) => this.roundTrip[item])) this.signalDone();
+      } else {
+        this.checkpoints[label] = decodePng(buffer);
+      }
+    }
+    this.maybeSignalCheckpoint();
+  }
+
+  markCheckpointReady() {
+    this.checkpointPending = true;
+    this.maybeSignalCheckpoint();
+  }
+
+  maybeSignalCheckpoint() {
+    if (!this.checkpointPending) return;
+    const labels = ["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"];
+    if (labels.some((label) => !this.checkpoints[label])) return;
+    this.checkpointPending = false;
+    this.checkpointSequence += 1;
+    const waiters = this.checkpointWaiters.splice(0);
+    for (const waiter of waiters) waiter.resolve(this.checkpointSequence);
+  }
+
+  signalDone() {
+    this.doneSignaled = true;
+    console.log(JSON.stringify({ event_type: "PhotopeaRoundTripReady", result_token: this.resultToken }));
+    const waiters = this.doneWaiters.splice(0);
+    for (const waiter of waiters) waiter.resolve();
+  }
+
+  fail(error) {
+    const value = error instanceof Error ? error : new Error(String(error));
+    for (const waiter of this.checkpointWaiters.splice(0)) waiter.reject(value);
+    for (const waiter of this.doneWaiters.splice(0)) waiter.reject(value);
+  }
+
+  waitForCheckpoint(afterSequence) {
+    if (this.checkpointSequence > afterSequence) return Promise.resolve(this.checkpointSequence);
+    return new Promise((resolve, reject) => this.checkpointWaiters.push({ resolve, reject }));
+  }
+
+  waitForDone() {
+    if (this.doneSignaled) return Promise.resolve();
+    return new Promise((resolve, reject) => this.doneWaiters.push({ resolve, reject }));
+  }
+
+  checkpointSummary(revision) {
+    const labels = ["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"];
+    if (labels.some((label) => !this.checkpoints[label])) throw new Error("Photopea checkpoint is incomplete");
+    return {
+      revision_id: revision.revision_id,
+      source_sha256: revision.source_sha256,
+      checkpoint_sha256: sha256(Buffer.concat(labels.map((label) => this.checkpoints[label].rgba))),
+      mask_sha256: sha256(this.checkpoints.mask.rgba),
+      artwork_sha256: sha256(this.checkpoints.artwork.rgba),
+    };
+  }
+
+  async applyRevision(mask, revision) {
+    if (revision.source_sha256 !== this.currentRevision.source_sha256) throw new Error("revision source hash mismatch");
+    if (revision.parent_revision_id !== this.currentRevision.revision_id) throw new Error("revision parent mismatch");
+    const previous = this.checkpointSequence;
+    this.inputFiles.mask = mask; this.currentRevision = revision; this.checkpoints = {}; this.roundTrip = {};
+    const checkpoint = this.waitForCheckpoint(previous);
+    const sourceToken = transfer(this.inputFiles.source);
+    const maskToken = transfer(mask);
+    await this.page.evaluate(({ sourceId, maskId, script }) => window.startRevision(maskId, sourceId, script), { sourceId: sourceToken, maskId: maskToken, script: photopeaRevisionScript(revision.revision_id) });
+    await checkpoint;
+    return this.checkpointSummary(revision);
+  }
+
+  async finalize(revision) {
+    this.currentRevision = revision; this.roundTrip = {}; this.psd = null;
+    const done = this.waitForDone();
+    console.log(JSON.stringify({ event_type: "PhotopeaFinalizeStage", stage: "script_started", result_token: this.resultToken }));
+    await this.page.evaluate((script) => window.startFinal(script), photopeaSavePsdScript());
+    await done;
+    console.log(JSON.stringify({ event_type: "PhotopeaFinalizeStage", stage: "roundtrip_ready", result_token: this.resultToken }));
+    const evidence = validatePixelEvidence(this.inputFiles, this.checkpoints, this.roundTrip, revision);
+    console.log(JSON.stringify({ event_type: "PhotopeaFinalizeStage", stage: "pixel_evidence_verified", result_token: this.resultToken }));
+    if (!this.psd || !this.psd.subarray(0, 4).equals(Buffer.from("8BPS"))) throw new Error("Photopea returned a non-PSD payload");
+    return { psd: this.psd, evidence };
+  }
+
+  async close() {
+    clearTimeout(this.timer);
+    app.off(`photopea:${this.resultToken}:binary`, this.onBinary);
+    app.off(`photopea:${this.resultToken}:checkpoint`, this.onCheckpoint);
+    app.off(`photopea:${this.resultToken}:failure`, this.onFailure);
+    app.off(`photopea:${this.resultToken}:done`, this.onDone);
+    await this.browser.close();
   }
 }
 
+async function exportViaPhotopea(inputFiles, revision, options = {}) {
+  const session = await PhotopeaLiveSession.open(inputFiles, revision, options);
+  try { return await session.finalize(revision); }
+  finally { await session.close(); }
+}
+
+app.use(express.raw({ type: "application/octet-stream", limit: "200mb" }));
 app.get("/healthz", (_request, response) => response.json({ status: "ok", provider: "photopea-live" }));
+app.get("/v1/photopea/blob/:id", (request, response) => {
+  const payload = transferStore.get(request.params.id);
+  if (!payload) return response.status(404).end();
+  return response.type("application/octet-stream").send(payload);
+});
+app.post("/v1/photopea/result/:id", (request, response) => {
+  if (!authorized(request)) return response.status(401).end();
+  const payload = Buffer.isBuffer(request.body) ? request.body : Buffer.from(request.body || []);
+  transferStore.set(request.params.id, { label: request.get("X-Photopea-Label") || "", buffer: payload });
+  app.emit(`photopea:${request.params.id}:binary`, { label: request.get("X-Photopea-Label") || "", buffer: payload });
+  return response.status(204).end();
+});
+app.post("/v1/photopea/failure/:id", express.text({ type: "*/*", limit: "8kb" }), (request, response) => {
+  app.emit(`photopea:${request.params.id}:failure`, String(request.body));
+  return response.status(204).end();
+});
+app.post("/v1/photopea/checkpoint/:id", express.text({ type: "*/*", limit: "1kb" }), (request, response) => {
+  app.emit(`photopea:${request.params.id}:checkpoint`);
+  return response.status(204).end();
+});
+app.post("/v1/photopea/done/:id", (request, response) => {
+  app.emit(`photopea:${request.params.id}:done`);
+  return response.status(204).end();
+});
+
+function sessionResponse(sessionId, record) {
+  return {
+    session_id: sessionId,
+    status: record.status,
+    revision: record.revision,
+    checkpoint: record.checkpoint,
+    expires_at: record.expiresAt,
+  };
+}
+
+app.post("/v1/photopea/sessions", upload.fields([
+  { name: "source", maxCount: 1 },
+  { name: "mask", maxCount: 1 },
+]), async (request, response) => {
+  if (!authorized(request)) return response.status(401).json({ code: "unauthorized" });
+  const source = request.files?.source?.[0]?.buffer;
+  const mask = request.files?.mask?.[0]?.buffer;
+  if (!source || !mask) return response.status(400).json({ code: "missing_source_or_mask" });
+  let revision;
+  try { revision = parseRasterRevision(request.body?.mask_revision); }
+  catch (error) { return response.status(400).json({ code: "invalid_photopea_mask_revision", message: String(error) }); }
+  try {
+    if (rasterMaskHash(mask) !== revision.result_mask_sha256) throw new Error("initial raster mask hash mismatch");
+    const live = await PhotopeaLiveSession.open({ source, mask }, revision, { timeoutMs: Number(process.env.PHOTOPEA_SESSION_TIMEOUT_MS || 300_000) });
+    const sessionId = crypto.randomUUID();
+    const record = { live, revision, checkpoint: live.checkpointSummary(revision), status: "checkpoint_ready", expiresAt: new Date(Date.now() + 300_000).toISOString() };
+    const timer = setTimeout(() => { const current = photopeaSessions.get(sessionId); if (current) { current.live.close().catch(() => {}); photopeaSessions.delete(sessionId); } }, 300_000);
+    timer.unref(); record.timer = timer;
+    photopeaSessions.set(sessionId, record);
+    return response.status(201).json(sessionResponse(sessionId, record));
+  } catch (error) { return response.status(502).json({ code: "photopea_session_failed", message: String(error) }); }
+});
+
+app.get("/v1/photopea/sessions/:id", (request, response) => {
+  if (!authorized(request)) return response.status(401).json({ code: "unauthorized" });
+  const record = photopeaSessions.get(request.params.id);
+  if (!record) return response.status(404).json({ code: "photopea_session_not_found" });
+  return response.json(sessionResponse(request.params.id, record));
+});
+
+app.post("/v1/photopea/sessions/:id/revisions", upload.single("mask"), async (request, response) => {
+  if (!authorized(request)) return response.status(401).json({ code: "unauthorized" });
+  const record = photopeaSessions.get(request.params.id);
+  if (!record) return response.status(404).json({ code: "photopea_session_not_found" });
+  if (!request.file?.buffer) return response.status(400).json({ code: "missing_mask" });
+  let revision;
+  try { revision = parseRasterRevision(request.body?.mask_revision); }
+  catch (error) { return response.status(400).json({ code: "invalid_photopea_mask_revision", message: String(error) }); }
+  if (revision.source_sha256 !== record.revision.source_sha256) return response.status(409).json({ code: "stale_source_revision" });
+  if (revision.parent_revision_id !== record.revision.revision_id) return response.status(409).json({ code: "stale_parent_revision" });
+  if (revision.checkpoint_sha256 !== record.checkpoint.checkpoint_sha256) return response.status(409).json({ code: "stale_checkpoint_revision" });
+  try {
+    if (rasterMaskHash(request.file.buffer) !== revision.result_mask_sha256) throw new Error("raster mask hash mismatch");
+    const checkpoint = await record.live.applyRevision(request.file.buffer, revision);
+    record.revision = revision; record.checkpoint = checkpoint; record.status = "checkpoint_ready";
+    return response.json(sessionResponse(request.params.id, record));
+  } catch (error) { record.status = "review_required"; return response.status(502).json({ code: "photopea_revision_failed", message: String(error) }); }
+});
+
+app.post("/v1/photopea/sessions/:id/finalize", async (request, response) => {
+  if (!authorized(request)) return response.status(401).json({ code: "unauthorized" });
+  const record = photopeaSessions.get(request.params.id);
+  if (!record) return response.status(404).json({ code: "photopea_session_not_found" });
+  try {
+    const result = await record.live.finalize(record.revision);
+    if (result.evidence.checkpoint_sha256 !== record.checkpoint.checkpoint_sha256) throw new Error("final PSD evidence does not match the accepted checkpoint");
+    clearTimeout(record.timer); photopeaSessions.delete(request.params.id);
+    response.set("X-Photopea-Roundtrip", "verified");
+    response.set("X-Photopea-Evidence", JSON.stringify(result.evidence));
+    return response.type("application/vnd.adobe.photoshop").send(result.psd);
+  } catch (error) { console.log(JSON.stringify({ event_type: "PhotopeaFinalizeFailed", message: String(error), stack: error.stack })); record.status = "review_required"; return response.status(502).json({ code: "photopea_finalize_failed", message: String(error) }); }
+});
+
+app.delete("/v1/photopea/sessions/:id", async (request, response) => {
+  if (!authorized(request)) return response.status(401).end();
+  const record = photopeaSessions.get(request.params.id);
+  if (record) { clearTimeout(record.timer); photopeaSessions.delete(request.params.id); await record.live.close(); }
+  return response.status(204).end();
+});
 
 app.post("/v1/photopea/export", upload.fields([
   { name: "source", maxCount: 1 },
-  { name: "artwork", maxCount: 1 },
   { name: "mask", maxCount: 1 },
-  { name: "variant_artistic", maxCount: 1 },
-  { name: "mask_artistic", maxCount: 1 },
-  { name: "variant_conservative", maxCount: 1 },
-  { name: "mask_conservative", maxCount: 1 },
 ]), async (request, response) => {
   if (!authorized(request)) return response.status(401).json({ code: "unauthorized" });
-  const names = ["source", "artwork", "mask", "variant_artistic", "mask_artistic", "variant_conservative", "mask_conservative"];
-  const files = names.map((name) => request.files?.[name]?.[0]).filter(Boolean);
-  const rawMaskPlan = request.body?.mask_plan;
-  let maskPlan = null;
-  if (rawMaskPlan) {
-    try {
-      maskPlan = JSON.parse(rawMaskPlan);
-      const polygons = ["subject_polygons", "remove_polygons", "protect_polygons"];
-      if (!maskPlan || typeof maskPlan !== "object" || typeof maskPlan.revision_id !== "string" || !Array.isArray(maskPlan.subject_polygons) || !maskPlan.subject_polygons.length) throw new Error("invalid mask plan");
-      polygons.forEach((name) => {
-        if (!Array.isArray(maskPlan[name]) || maskPlan[name].length > 128) throw new Error("invalid " + name);
-        maskPlan[name].forEach((polygon) => {
-          if (!Array.isArray(polygon) || polygon.length < 3 || polygon.length > 4096) throw new Error("invalid polygon");
-          polygon.forEach((point) => {
-            if (!Array.isArray(point) || point.length !== 2 || point.some((value) => typeof value !== "number" || value < 0 || value > 1)) throw new Error("invalid point");
-          });
-        });
-      });
-      if (!Number.isInteger(maskPlan.feather_px) || maskPlan.feather_px < 0 || maskPlan.feather_px > 256) throw new Error("invalid feather_px");
-    } catch (error) {
-      return response.status(400).json({ code: "invalid_photopea_mask_plan", message: String(error) });
-    }
-  }
-  const hasVariants = names.slice(3).every((name) => request.files?.[name]?.[0]);
-  if ((maskPlan && files.length !== 1) || (!maskPlan && files.length !== 3 && !hasVariants)) return response.status(400).json({ code: "missing_photopea_inputs" });
+  const source = request.files?.source?.[0]?.buffer;
+  const mask = request.files?.mask?.[0]?.buffer;
+  if (!source || !mask) return response.status(400).json({ code: "missing_source_or_mask" });
+  let revision;
   try {
-    const psd = await exportViaPhotopea(files, maskPlan ? {
-      script: photopeaMaskSessionScript(maskPlan),
-      timeoutMs: Number(process.env.PHOTOPEA_SESSION_TIMEOUT_MS || 120_000),
-    } : {});
-    response.set("X-Photopea-Roundtrip", skipRoundTrip ? "structure-built" : "verified");
-    response.type("application/vnd.adobe.photoshop").send(psd);
+    revision = parseRasterRevision(request.body?.mask_revision);
+  } catch (error) { return response.status(400).json({ code: "invalid_photopea_mask_revision", message: String(error) }); }
+  try {
+    if (rasterMaskHash(mask) !== revision.result_mask_sha256) return response.status(409).json({ code: "raster_mask_hash_mismatch" });
+    const result = await exportViaPhotopea({ source, mask }, revision, { timeoutMs: Number(process.env.PHOTOPEA_SESSION_TIMEOUT_MS || 300_000) });
+    response.set("X-Photopea-Roundtrip", "verified");
+    response.set("X-Photopea-Evidence", JSON.stringify(result.evidence));
+    return response.type("application/vnd.adobe.photoshop").send(result.psd);
   } catch (error) {
-    response.status(502).json({ code: "photopea_export_failed", message: String(error) });
+    return response.status(502).json({ code: "photopea_export_failed", message: String(error) });
   }
 });
 

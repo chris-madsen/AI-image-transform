@@ -29,16 +29,16 @@
 - [x] 4.2 Add policy-aware idempotency fingerprint, atomic conflict behavior and HTTP 409.
 - [x] 4.3 Enforce public authentication, manifest shape and streaming upload limits.
 - [x] 4.4 Increment HTTP metrics and remove unsupported readiness claims.
-- [x] 4.5 Publish core artifacts before Photopea, keep PSD export in a bounded background executor, and make the Skill helper opt out of PSD waiting by default.
+- [x] 4.5 Publish core artifacts before Photopea, keep PSD export in a bounded background executor, and make the Skill helper wait for PSD by default with an explicit `--core-only` diagnostic opt-out.
 
 ## 5. Photopea conformance
 
 - [x] 5.1 Replace URL-embedded full-size inputs with readiness-gated ArrayBuffer messaging.
-- [x] 5.2 Build one Photopea document with non-empty source, working-art and grayscale working-mask pixels, a linked raster mask and real independently toggleable garment fills; verify in a reopened PSD.
-- [ ] 5.3 Add PSD round-trip fixture and structure/visual validation; verify mask equivalence and black/navy/blue-jean rendering before allowing `passed`.
-- [ ] 5.4 Run a full-resolution Photopea export from the job API within the five-minute bound; verify report evidence links to the exact returned PSD and no placeholder layer is accepted. (Current attempts exceeded the bound and are intentionally not marked complete.)
-- [ ] 5.5 Replace the seven-PNG PSD path with a single-source Photopea session that duplicates layers and creates masks from typed selection plans inside Photopea.
-- [ ] 5.6 Add checkpoint/correction protocol and a bounded vision review loop; reject arbitrary scripts and invalid polygon plans.
+- [x] 5.2 Build one Photopea document with non-empty source, working-art and grayscale working-mask pixels, a linked raster mask and real independently toggleable garment fills; verify in a reopened PSD with pixel evidence.
+- [x] 5.3 Add PSD round-trip fixture and structure/visual validation; verify mask equivalence and black/navy/blue-jean rendering before allowing `passed`.
+- [ ] 5.4 Run a full-resolution Photopea export from the job API within the five-minute bound; verify report evidence links to the exact returned PSD and no placeholder layer is accepted. The direct Photopea session/export gate now passes; the external job-level POST → poll proof remains pending.
+- [x] 5.5 Replace the seven-PNG PSD path with a single-source Photopea session that imports one raster mask carrier and creates linked masks from carrier transparency inside Photopea.
+- [x] 5.6 Add checkpoint/correction protocol and a bounded vision review loop using hash-bound raster revisions; reject arbitrary scripts, stale revisions and polygon plans.
 
 ## 6. Evidence
 
