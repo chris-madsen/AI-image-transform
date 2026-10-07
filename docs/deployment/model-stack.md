@@ -106,3 +106,33 @@ and answer; it is not a production latency claim. The generated Panther
 consensus was visually inspected and rejected because the models retained a
 visible halo and removed owner-approved decorative perimeter detail. Its report
 therefore remains `review_required`.
+
+## Windows DirectML deployment
+
+The Windows inference host is implemented in `deployment/windows/` and
+`scripts/serve_onnx_proposals.py`. It is the supported deployment path for the
+Radeon RX Vega 56: native Windows ONNX Runtime is configured with
+`DmlExecutionProvider` first and `CPUExecutionProvider` second. The session is
+sequential, memory-pattern allocation is disabled, and the server runs one
+request at a time. It does not use ROCm or WSL2.
+
+```powershell
+.\deployment\windows\setup-directml.ps1 -ConfigureFirewall
+.\deployment\windows\run-proposal-server.ps1 `
+  -ModelPath 'C:\models\birefnet_hr_matting_1024.onnx' `
+  -ModelVersion 'birefnet-export-<commit>' `
+  -WeightsSha256 '<64-lowercase-hex-characters>'
+```
+
+The setup script fails if DirectML is not visible. CPU fallback is available
+only through the explicit `-AllowCpuFallback` diagnostic switch. The server
+requires a pinned local ONNX file, model version, license and SHA-256; it never
+downloads weights or calls a paid API. It exposes the same `/v1/proposal`
+contract as the existing HTTP proposal adapters and returns provider, input
+size, source hash, proposal hash and inference timing in every response.
+
+The benchmark script runs batch-size-one measurements at 1024 and 2048. A
+fixed-size export is expected to reject a different input size; a separate
+2048 export is required rather than silently changing model geometry. The
+4500×5400 artwork is resized inside the adapter, and the returned alpha is
+resized back to source dimensions before deterministic processing.

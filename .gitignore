@@ -1,5 +1,6 @@
 # Python
 .venv/
+.venv-directml/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -19,6 +20,8 @@ dist/
 artifacts/*
 !artifacts/.gitkeep
 .models/
+*.onnx
+*.onnx.data
 
 # Node / Photopea outer environment
 bridge/node_modules/

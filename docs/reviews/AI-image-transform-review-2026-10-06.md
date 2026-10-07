@@ -187,3 +187,29 @@ matting for arbitrary artwork.
 - The smoke PSD is intentionally not committed. The authoritative PNGs,
   masks, previews and PSD are produced by the same accepted Photopea revision;
   the owner golden gate still requires a real deployed model/reviewer result.
+
+## Follow-up verification on 2026-10-07 (Windows DirectML deployment)
+
+- Added a native Windows ONNX Runtime adapter for the Radeon RX Vega 56 in
+  `scripts/serve_onnx_proposals.py`. It uses `DmlExecutionProvider` before an
+  explicitly available `CPUExecutionProvider`, one sequential inference at a
+  time, disabled memory-pattern allocation, fixed 1024/2048 input sizes,
+  source-bound alpha resizing and model/weights SHA-256 metadata.
+- Added reproducible Windows setup, server, firewall and batch-one benchmark
+  scripts under `deployment/windows/`. The setup requires
+  `onnxruntime-directml==1.20.1`; it does not use ROCm, WSL2, weight download
+  or a paid API. CPU fallback is available only as an explicit diagnostic
+  switch and is not silent.
+- Added contract tests for provider ordering, required-DirectML refusal,
+  preprocessing, logits-to-alpha conversion and unsupported-provider refusal.
+  The adapter is intentionally lazy-imported so the Linux core test suite does
+  not need a Windows-only runtime package.
+- Added the 1024/2048 benchmark contract. A fixed-size ONNX export must reject
+  a different geometry; the 4500x5400 artwork is resized inside the adapter and
+  its alpha is resized back before the local deterministic pipeline continues.
+- Windows GPU execution is not claimed as completed here: this environment is
+  Linux and has no `pwsh` or Vega 56 DirectML runtime. The setup script performs
+  the provider check on the actual Windows host; its benchmark output and
+  latency/memory measurements are required before deployment evidence can be
+  considered complete. This does not change the separate Panther golden gate:
+  the current specialized proposal remains rejected and unpromoted.

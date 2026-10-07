@@ -116,6 +116,13 @@ SAM2_WEIGHTS_SHA256='<64-lowercase-hex-characters>' \
 make service
 ```
 
+For the Windows Vega 56 host, use the local DirectML ONNX proposal server
+instead of a hosted or paid inference API. Its LAN address can be used for
+`BIREFNET_ENDPOINT`/`BEN2_ENDPOINT` only after the model has passed the Windows
+benchmark and the endpoint health metadata has been recorded. Keep the Windows
+port on the home LAN/firewall; do not expose it through the public Cloudflare
+tunnel.
+
 The service rejects missing or mismatched model metadata and does not fall
 back to a color heuristic. SAM 2.1 protection is served by the deployment-only
 `scripts/serve_sam2_protection.py`; it returns only source-bound protection and

@@ -37,6 +37,7 @@
 - [x] 6.2 Remove caller-supplied final-mask arguments from the Skill helper, submit source/intent only, poll the mandatory Photopea authoring/review stage by default and download bundles; verify it handles review_required/refused/failed distinctly.
 - [x] 6.3 Document Named Cloudflare Tunnel deployment with environment-injected URL/token and no Printify credentials; verify local service remains runnable without Cloudflare.
 - [x] 6.4 Implement and document the production Photopea Live outer-environment workflow; verify ArrayBuffer transfer of internal proposals/corrections, Photopea mask authoring, reviewable checkpoints, PSD reopen/pixel inspection and no `passed` status without a typed review decision and conformance evidence. A configured external vision credential/model remains an operational prerequisite for live automatic acceptance.
+- [x] 6.5 Implement the Windows native ONNX Runtime DirectML proposal adapter for the Vega 56 deployment: pinned DirectML environment, DML-first/CPU-second provider selection, sequential single-request inference, fixed 1024/2048 benchmark, LAN server and firewall scripts, model metadata and fail-closed hash checks. A physical Windows GPU run remains deployment evidence and is not claimed from Linux.
 
 ## 7. Verification and completion
 
