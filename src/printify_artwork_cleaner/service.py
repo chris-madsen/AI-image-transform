@@ -143,6 +143,17 @@ class ServiceRuntime:
             # is an external, slow adapter and must never block this stage.
             report = process_image_bytes(source, effective_policy, output_dir, psd_exporter=None, resolved_masks=resolved_masks)
             report_payload = report.as_dict()
+            # Core renders are useful diagnostic proposals only.  They must
+            # never be confused with the later Photopea checkpoint selected by
+            # the bounded review loop.
+            for item in report_payload["artifacts"]:
+                item["role"] = "proposal"
+                item["authoritative"] = False
+            report_payload["artifact_set"] = {
+                "source": "core_proposal",
+                "authoritative_revision_id": None,
+                "authoritative_artifacts": [],
+            }
             if self.proposal_provider is None:
                 validation = report_payload["validation"]
                 validation["status"] = JobStatus.REVIEW_REQUIRED.value
@@ -210,10 +221,15 @@ class ServiceRuntime:
                 for label, filename in (("artwork", "artwork_final.png"), ("mask", "mask_final.png"), ("preview_black", "preview_final_black.png"), ("preview_navy", "preview_final_navy.png"), ("preview_blue_jean", "preview_final_blue_jean.png")):
                     path = output_dir / filename
                     path.write_bytes(checkpoint_artifacts[label])
-                    report_payload["artifacts"].append({"artifact_id": filename, "name": filename, "media_type": "image/png", "size_bytes": path.stat().st_size, "sha256": sha256_bytes(path.read_bytes())})
+                    report_payload["artifacts"].append({"artifact_id": filename, "name": filename, "media_type": "image/png", "size_bytes": path.stat().st_size, "sha256": sha256_bytes(path.read_bytes()), "role": "authoritative", "authoritative": True})
                 psd_path = output_dir / "artwork_editable.psd"
                 psd_path.write_bytes(psd_payload)
-                artifact = {"artifact_id": psd_path.name, "name": psd_path.name, "media_type": "image/vnd.adobe.photoshop", "size_bytes": psd_path.stat().st_size, "sha256": sha256_bytes(psd_payload)}
+                artifact = {"artifact_id": psd_path.name, "name": psd_path.name, "media_type": "image/vnd.adobe.photoshop", "size_bytes": psd_path.stat().st_size, "sha256": sha256_bytes(psd_payload), "role": "authoritative", "authoritative": True}
+                report_payload["artifact_set"] = {
+                    "source": "photopea_checkpoint",
+                    "authoritative_revision_id": accepted_revision.revision_id,
+                    "authoritative_artifacts": [filename for _label, filename in (("artwork", "artwork_final.png"), ("mask", "mask_final.png"), ("preview_black", "preview_final_black.png"), ("preview_navy", "preview_final_navy.png"), ("preview_blue_jean", "preview_final_blue_jean.png"))] + [psd_path.name],
+                }
                 self._publish_psd_result(job_id, report_payload, artifact, verified=True, evidence=asdict(evidence), revision=asdict(accepted_revision))
                 _event("PhotopeaExportCompleted", job_id=job_id, verified=True, review_revisions=accepted_revision.revision_id)
                 return
@@ -235,6 +251,8 @@ class ServiceRuntime:
                 "media_type": "image/vnd.adobe.photoshop",
                 "size_bytes": psd_path.stat().st_size,
                 "sha256": sha256_bytes(psd_path.read_bytes()),
+                "role": "authoritative",
+                "authoritative": True,
             }
             verified = bool(getattr(self.psd_exporter, "round_trip_verified", False))
             evidence = getattr(self.psd_exporter, "evidence", None)
@@ -290,6 +308,12 @@ class ServiceRuntime:
                 updated["photopea_evidence"] = evidence
             if revision is not None:
                 updated["photopea_revision"] = revision
+            if updated.get("artifact_set", {}).get("source") != "photopea_checkpoint":
+                updated["artifact_set"] = {
+                    "source": "photopea_export",
+                    "authoritative_revision_id": (revision or {}).get("revision_id"),
+                    "authoritative_artifacts": [artifact["name"]],
+                }
             if not verified:
                 warnings.append("psd_structure_unverified")
                 review_regions.append("psd_validation")
@@ -348,8 +372,19 @@ class ServiceRuntime:
         if record is None:
             raise HTTPException(status_code=404, detail={"code": "job_not_found", "message": "unknown job"})
         directory = self.store.job_dir(job_id) / "artifacts"
+        report_artifacts = {
+            item.get("name"): item
+            for item in (record.payload.get("report", {}).get("artifacts", []) if record.payload else [])
+            if isinstance(item, dict) and item.get("name")
+        }
         return [
-            {"name": path.name, "size_bytes": path.stat().st_size, "download_url": f"/v1/artifacts/{job_id}/{path.name}"}
+            {
+                "name": path.name,
+                "size_bytes": path.stat().st_size,
+                "download_url": f"/v1/artifacts/{job_id}/{path.name}",
+                "role": report_artifacts.get(path.name, {}).get("role", "diagnostic"),
+                "authoritative": bool(report_artifacts.get(path.name, {}).get("authoritative", False)),
+            }
             for path in sorted(directory.iterdir()) if path.is_file()
         ] if directory.exists() else []
 

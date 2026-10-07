@@ -120,6 +120,14 @@ is pending. The adapter has a hard five-minute timeout. Without a completed
 Photopea export the service MUST return `review_required` rather than claiming
 a completed PSD job.
 
+Artifact provenance is explicit in both the job report and the artifact-list
+endpoint. Core renders have `role: proposal` and
+`authoritative: false`; they are diagnostics only. The accepted Photopea
+checkpoint exports and the PSD have `role: authoritative` and
+`authoritative: true`. The report's `artifact_set.authoritative_artifacts`
+contains the only files that a client may deliver as the accepted result. A
+missing or unverified authoritative set remains `review_required`.
+
 The Photopea session uses a raster mask carrier and canonical charID mask
 creation; polygon selection plans are rejected. The initial checkpoint is
 authored in one Photopea document. Revisions stay in one live browser session

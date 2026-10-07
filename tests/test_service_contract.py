@@ -56,6 +56,14 @@ def test_async_job_contract_and_artifacts(tmp_path: Path) -> None:
     assert "report.json" in names
     assert terminal["report"]["psd_export_status"] == "unverified"
     assert terminal["report"]["stage_status"]["psd_validation_status"] == "unverified_payload"
+    assert terminal["report"]["artifact_set"]["source"] == "photopea_export"
+    assert terminal["report"]["artifact_set"]["authoritative_artifacts"] == ["artwork_editable.psd"]
+    report_entries = {item["name"]: item for item in terminal["report"]["artifacts"]}
+    assert report_entries["artwork_editable.psd"]["authoritative"] is True
+    assert report_entries["artwork_conservative.png"]["authoritative"] is False
+    assert report_entries["artwork_conservative.png"]["role"] == "proposal"
+    assert report_entries["report.json"]["role"] == "proposal"
+    assert {item["name"]: item["authoritative"] for item in artifacts}["artwork_editable.psd"] is True
     downloaded = client.get(f"/v1/artifacts/{job_id}/report.json")
     assert downloaded.status_code == 200
 

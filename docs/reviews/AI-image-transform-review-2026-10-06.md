@@ -122,3 +122,14 @@ matting for arbitrary artwork.
   the t8 candidate has not been promoted to production or marked as a golden
   match. The external OpenAI and Anthropic endpoints in this environment
   returned HTTP 401, so no multimodal acceptance was fabricated.
+
+## Follow-up verification on 2026-10-07 (artifact provenance)
+
+- Core PNG/mask/preview outputs are now marked `role: proposal` and
+  `authoritative: false` in the job report.
+- Photopea checkpoint exports and the PSD are marked `role: authoritative` and
+  `authoritative: true`; `artifact_set.authoritative_artifacts` identifies the
+  exact deliverable set and accepted revision.
+- `GET /v1/jobs/{job_id}/artifacts` exposes the same provenance fields, so a
+  Skill/client cannot mistake a pre-Photopea candidate for the accepted result.
+- Regression and full suites passed: `73 passed`; `git diff --check` passed.
