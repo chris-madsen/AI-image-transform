@@ -1,0 +1,17 @@
+{
+  "name": "smoke",
+  "class": "smoke",
+  "expected_status": "passed",
+  "source_file": "source.png",
+  "protection_file": "protection.png",
+  "removal_file": "removal.png",
+  "expected_file": "expected.png",
+  "dimensions": [
+    96,
+    96
+  ],
+  "source_sha256": "18b11091a09731056af8abed130bc27d5e5b981f45200d7eaafff4ea1e5675d4",
+  "protection_sha256": "f3a821332430ba1fcec58c51573e534b6edd900171d29b4438d312b6fbf04215",
+  "removal_sha256": "bd6bc8c583a4e118cef97564ea36cb0f5146573af8d2df9198f2cb082ff4ef18",
+  "expected_sha256": "b3b3cf290283394d6c2c0beeed02f95f85c350b1b961dc4cb4f4b53ff9999939"
+}

@@ -1,0 +1,17 @@
+{
+  "name": "typography",
+  "class": "typography",
+  "expected_status": "passed",
+  "source_file": "source.png",
+  "protection_file": "protection.png",
+  "removal_file": "removal.png",
+  "expected_file": "expected.png",
+  "dimensions": [
+    96,
+    96
+  ],
+  "source_sha256": "9cbc4215648bff7d6ab2e487eabf92e349a65d19e89ecc419c508f8aaab8bc7a",
+  "protection_sha256": "f7621f47e10cf7496fdcd3a74233d27427052d3fa9981f0ce53034967e618b2e",
+  "removal_sha256": "6dc3017cab7bc33be5e5d4f52cdc940244789f464159170a00c2e9ef003e9ab5",
+  "expected_sha256": "7ed51e0fff23a32f36581f9836a5224bd097f9c755a0f04b2e57bc82dc655ddb"
+}

@@ -1,0 +1,17 @@
+{
+  "name": "baked_checkerboard",
+  "class": "baked_checkerboard",
+  "expected_status": "review_required",
+  "source_file": "source.png",
+  "protection_file": "protection.png",
+  "removal_file": "removal.png",
+  "expected_file": "expected.png",
+  "dimensions": [
+    96,
+    96
+  ],
+  "source_sha256": "f510639a6f941b96c3a165323c10f1c4a38b0a519633861b04bea02f680f080f",
+  "protection_sha256": "59939295e7247058ce9896b450eb3fc1ecc5f191dbf9e89b6d56d9a9b5bdadf7",
+  "removal_sha256": "2f1b6865b4bb40937411d1e23e1cedd6b2a3a6795862568bebe7d35d2cfd41ee",
+  "expected_sha256": "e9594dfc1dab92067f1943bbae64271b190c108d1005495fcd2e86953d07ed51"
+}

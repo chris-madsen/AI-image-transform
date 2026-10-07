@@ -1,0 +1,14 @@
+{
+  "fixture_set": "synthetic-approved-contract-v1",
+  "classes": [
+    "animal_text_splashes",
+    "vegetation",
+    "light_internal_details",
+    "typography",
+    "smoke",
+    "baked_checkerboard",
+    "boundary_touching",
+    "ambiguous"
+  ],
+  "notes": "Deterministic contract fixtures. Panther owner-approved quality remains separate."
+}

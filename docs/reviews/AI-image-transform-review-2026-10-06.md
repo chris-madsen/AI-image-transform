@@ -133,3 +133,25 @@ matting for arbitrary artwork.
 - `GET /v1/jobs/{job_id}/artifacts` exposes the same provenance fields, so a
   Skill/client cannot mistake a pre-Photopea candidate for the accepted result.
 - Regression and full suites passed: `73 passed`; `git diff --check` passed.
+
+## Follow-up verification on 2026-10-07 (remaining implementation gates)
+
+- Added a typed, source-bound `SAM21ProtectionProvider` and the deployment-only
+  `scripts/serve_sam2_protection.py`. SAM2 returns protection/uncertainty only;
+  border-touching masks are excluded and no SAM alpha becomes authoritative.
+- Wired optional SAM2 protection into the BiRefNet/BEN2 consensus behind
+  explicit endpoint/version/license/weights-hash configuration. Missing or
+  mismatched pins fail closed.
+- Added the eight deterministic contract fixture classes required by the
+  acceptance matrix: animal/text/splashes, vegetation, light internal details,
+  typography, smoke, baked checkerboard, boundary-touching and ambiguous.
+  Their PNG hashes, protected-pixel invariants and review-required statuses are
+  tested in `tests/test_golden_fixture_classes.py`.
+- The implementation tasks are now complete in both OpenSpec changes. Two
+  intentionally separate promotion tasks remain: the real external reviewer
+  must accept the Photopea checkpoint and the Panther candidate must pass the
+  owner-approved golden. The current external credentials return HTTP 401 and
+  the current BiRefNet/BEN2 candidate remains rejected; neither condition is
+  hidden or downgraded.
+- Verification: `77 passed`, `compileall`, `node --check bridge/server.mjs`,
+  both OpenSpec strict validations and `git diff --check` passed.

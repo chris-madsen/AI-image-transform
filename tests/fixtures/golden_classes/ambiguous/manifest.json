@@ -1,0 +1,17 @@
+{
+  "name": "ambiguous",
+  "class": "ambiguous",
+  "expected_status": "review_required",
+  "source_file": "source.png",
+  "protection_file": "protection.png",
+  "removal_file": "removal.png",
+  "expected_file": "expected.png",
+  "dimensions": [
+    96,
+    96
+  ],
+  "source_sha256": "89c7cb6d452f210bc6afda4f6c7f7a88a05ca7e56bed935a4086fb90656bc92c",
+  "protection_sha256": "3b461be2bb4531f815561ed612c02eb1ed9a4a6e2803918bf43008082e26871e",
+  "removal_sha256": "bcbd33766afd0d9ee1b6d6d5508e186cb28cbc1fb5314a0446cd0ffc48b773d9",
+  "expected_sha256": "8923041bcdbc8696b1db24708e3e5090d235c3c6f10e595f94c1aa70ade44f48"
+}

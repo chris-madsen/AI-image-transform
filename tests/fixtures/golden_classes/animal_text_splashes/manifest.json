@@ -1,0 +1,17 @@
+{
+  "name": "animal_text_splashes",
+  "class": "animal_text_splashes",
+  "expected_status": "passed",
+  "source_file": "source.png",
+  "protection_file": "protection.png",
+  "removal_file": "removal.png",
+  "expected_file": "expected.png",
+  "dimensions": [
+    96,
+    96
+  ],
+  "source_sha256": "a9af724c689917d17e0f6b1e12c5cf23b34ae02e6b1f1a4fad7841938be2ab55",
+  "protection_sha256": "8d9fa65b6ae442f8a7e7522c2c2e06303aa14e3d3cdba7beefcddfb1fbae07e0",
+  "removal_sha256": "47a0e678186855d40da3a4d0346bf25a7f33b6c2afbd721dfdbef7b97320ef37",
+  "expected_sha256": "a1c4b9be588f485db20a1794395d61acc01e78beb95bdbe4eb10ed98d274689a"
+}

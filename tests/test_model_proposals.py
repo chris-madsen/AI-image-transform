@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import io
 import json
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from printify_artwork_cleaner.adapters.model_proposals import (
     ConsensusMattingProvider,
@@ -12,8 +15,10 @@ from printify_artwork_cleaner.adapters.model_proposals import (
     HttpMattingProvider,
     ModelProposalUnavailable,
     ProposalResponse,
+    SAM21ProtectionProvider,
     configured_consensus_provider,
 )
+from printify_artwork_cleaner.domain.image_math import canonical_rgba_png_bytes
 from printify_artwork_cleaner.domain.models import ModelEvidence, ProcessingPolicy
 
 
@@ -125,3 +130,50 @@ def test_configured_provider_requires_independent_metadata_pins(monkeypatch) -> 
     assert provider is not None
     assert provider.primary.version == "birefnet-v1"
     assert provider.secondary.version == "ben2-v1"
+
+
+def test_consensus_wires_optional_sam2_protection(monkeypatch) -> None:
+    for name, value in {
+        "BIREFNET_ENDPOINT": "http://birefnet.test",
+        "BIREFNET_MODEL_VERSION": "birefnet-v1",
+        "BIREFNET_MODEL_LICENSE": "apache-2.0",
+        "BIREFNET_WEIGHTS_SHA256": "a" * 64,
+        "BEN2_ENDPOINT": "http://ben2.test",
+        "BEN2_MODEL_VERSION": "ben2-v1",
+        "BEN2_MODEL_LICENSE": "apache-2.0",
+        "BEN2_WEIGHTS_SHA256": "b" * 64,
+        "SAM2_ENDPOINT": "http://sam2.test",
+        "SAM2_MODEL_VERSION": "sam2-v1",
+        "SAM2_MODEL_LICENSE": "apache-2.0",
+        "SAM2_WEIGHTS_SHA256": "c" * 64,
+    }.items():
+        monkeypatch.setenv(name, value)
+    provider = configured_consensus_provider()
+    assert provider is not None
+    assert isinstance(provider.protection_provider, SAM21ProtectionProvider)
+
+
+def test_sam2_protection_provider_is_source_and_weight_bound(monkeypatch) -> None:
+    source = np.zeros((2, 2, 4), dtype=np.uint8)
+    stream = io.BytesIO()
+    Image.fromarray(np.zeros((2, 2), dtype=np.uint8), mode="L").save(stream, format="PNG")
+    response = {
+        "model": "SAM 2.1",
+        "version": "sam2-v1",
+        "license": "apache-2.0",
+        "weights_sha256": "c" * 64,
+        "source_sha256": hashlib.sha256(canonical_rgba_png_bytes(source)).hexdigest(),
+        "protection_png_base64": base64.b64encode(stream.getvalue()).decode("ascii"),
+        "uncertainty_png_base64": base64.b64encode(stream.getvalue()).decode("ascii"),
+    }
+
+    class _Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def read(self): return json.dumps(response).encode()
+
+    monkeypatch.setattr("printify_artwork_cleaner.adapters.model_proposals.urlopen", lambda *_args, **_kwargs: _Response())
+    provider = SAM21ProtectionProvider("http://sam2.test", version="sam2-v1", license="apache-2.0", weights_sha256="c" * 64)
+    result = provider.propose(source, ProcessingPolicy())
+    assert result.protection.shape == (2, 2)
+    assert result.evidence.provider == "sam2"

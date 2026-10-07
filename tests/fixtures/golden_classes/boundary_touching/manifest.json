@@ -1,0 +1,17 @@
+{
+  "name": "boundary_touching",
+  "class": "boundary_touching",
+  "expected_status": "review_required",
+  "source_file": "source.png",
+  "protection_file": "protection.png",
+  "removal_file": "removal.png",
+  "expected_file": "expected.png",
+  "dimensions": [
+    96,
+    96
+  ],
+  "source_sha256": "f7b24b2eac724dae6f353a0f4d3d63e303551949b08e3ff6b12a6f5a080445fc",
+  "protection_sha256": "e9ff331102c000431ec1e2670cf19093ae48c10e395168480c4242c9abde3981",
+  "removal_sha256": "3887fd07eb1305e0c68d165f87ae78092316e9e166d4e91475cf82e8a40653a6",
+  "expected_sha256": "0a86187be450e97ecf85517c60fd8b5a3322c7ea4f0e85bb44b82cf8fbd67fa2"
+}

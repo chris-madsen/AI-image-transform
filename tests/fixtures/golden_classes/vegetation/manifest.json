@@ -1,0 +1,17 @@
+{
+  "name": "vegetation",
+  "class": "vegetation",
+  "expected_status": "passed",
+  "source_file": "source.png",
+  "protection_file": "protection.png",
+  "removal_file": "removal.png",
+  "expected_file": "expected.png",
+  "dimensions": [
+    96,
+    96
+  ],
+  "source_sha256": "0b0a3abadc66077df3046a68d9748e1aab8e48a1dfd146ffa7db07d13b05d80e",
+  "protection_sha256": "2c34196b129d452367d6c37836d1f8e569f296b33d9d423e3f74e3e11732ae75",
+  "removal_sha256": "888cfb0d5bf760e34cd586cac5f89de2f159a50fa245dbede4b3173873d9e9a7",
+  "expected_sha256": "0b62deee85cc17a28a2c345f7238379db903d4692c3312fbd6ee992da04e34fe"
+}

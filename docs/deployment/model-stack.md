@@ -36,11 +36,21 @@ BEN2_ENDPOINT=https://matting.internal/ben2
 BEN2_MODEL_VERSION=<deployment-pinned-version>
 BEN2_MODEL_LICENSE=<license-recorded-with-the-weight-release>
 BEN2_WEIGHTS_SHA256=<64-lowercase-hex-characters>
+
+SAM2_ENDPOINT=https://matting.internal/sam2-protection
+SAM2_MODEL_VERSION=<deployment-pinned-version>
+SAM2_MODEL_LICENSE=<license-recorded-with-the-weight-release>
+SAM2_WEIGHTS_SHA256=<64-lowercase-hex-characters>
 ```
 
-SAM 2.1 and optional ViTMatte are separate protection/refinement ports. They
-must be enabled only after their own endpoint, version, license and weights
-manifest is recorded. They are not represented by fake defaults in the core.
+SAM 2.1 and optional ViTMatte are separate protection/refinement ports. SAM
+2.1 is wired through `SAM2_ENDPOINT` and the typed `SAM21ProtectionProvider`;
+its endpoint returns only a source-bound protection/uncertainty carrier. The
+deployment adapter is `scripts/serve_sam2_protection.py`. It excludes
+border-touching automatic masks and never emits final alpha. SAM must be
+enabled only after its endpoint, version, license and weights manifest is
+recorded. ViTMatte remains an optional refinement port and is not represented
+by fake defaults in the core.
 
 ## Evidence required to promote a stack
 
@@ -53,10 +63,11 @@ For each model release, store outside Git or in the deployment registry:
 5. independent Panther golden acceptance result;
 6. latency and memory measurements for the five-minute job budget.
 
-The repository contains the adapter contract and deployment-only serving
-script, but model endpoints and weight files remain external runtime resources.
-Therefore production deployment and acceptance must not be marked complete
-until those resources are supplied and the golden fixture passes.
+The repository contains the adapter contracts and deployment-only serving
+scripts, but model endpoints and weight files remain external runtime
+resources. Therefore model deployment and visual acceptance must not be
+marked complete until those resources are supplied and the golden fixture
+passes.
 
 ## Reproducible local proposal server
 

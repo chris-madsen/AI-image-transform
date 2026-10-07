@@ -1,0 +1,17 @@
+{
+  "name": "light_internal_details",
+  "class": "light_internal_details",
+  "expected_status": "passed",
+  "source_file": "source.png",
+  "protection_file": "protection.png",
+  "removal_file": "removal.png",
+  "expected_file": "expected.png",
+  "dimensions": [
+    96,
+    96
+  ],
+  "source_sha256": "4744ed4f49a597b059eb012a3c9b175878ecd917a4cf46b28beebe031478c25c",
+  "protection_sha256": "cb1b217483c15dcaa173a9571e6277d68f29c1707e8dc3019b0a96b4f68ad58a",
+  "removal_sha256": "c0220106537c22c6f88779a750c407fa33998e5325145ce8f0df71a98caf2a23",
+  "expected_sha256": "f885ffd3a0a065f453f6e5c8d71f53928f6fdb367ecc26d90e6cd2ee9ae67d24"
+}

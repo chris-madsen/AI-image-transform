@@ -100,12 +100,18 @@ BEN2_ENDPOINT='https://matting.internal/ben2' \
 BEN2_MODEL_VERSION='<pinned-release>' \
 BEN2_MODEL_LICENSE='<recorded-license>' \
 BEN2_WEIGHTS_SHA256='<64-lowercase-hex-characters>' \
+SAM2_ENDPOINT='https://matting.internal/sam2-protection' \
+SAM2_MODEL_VERSION='<pinned-release>' \
+SAM2_MODEL_LICENSE='<recorded-license>' \
+SAM2_WEIGHTS_SHA256='<64-lowercase-hex-characters>' \
 make service
 ```
 
 The service rejects missing or mismatched model metadata and does not fall
-back to a color heuristic. SAM 2.1 protection and optional ViTMatte refinement
-require their own deployment adapter and release manifest; see
+back to a color heuristic. SAM 2.1 protection is served by the deployment-only
+`scripts/serve_sam2_protection.py`; it returns only source-bound protection and
+uncertainty carriers and excludes border-touching masks. Optional ViTMatte
+refinement still requires its own deployment adapter and release manifest; see
 `docs/deployment/model-stack.md`.
 
 The reviewer receives checkpoint artwork, mask and dark-garment previews. It
