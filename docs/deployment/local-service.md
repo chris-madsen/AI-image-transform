@@ -62,6 +62,40 @@ The single-source typed Photopea mask session has a separate fail-fast limit:
 PHOTOPEA_SESSION_TIMEOUT_MS=300000 npm start
 ```
 
+Configure the external multimodal checkpoint reviewer separately:
+
+```bash
+VISION_REVIEW_ENDPOINT='https://vision.example/review' \
+VISION_REVIEW_TOKEN='change-me' \
+VISION_REVIEW_TIMEOUT=120 \
+make service
+```
+
+Configure both independent proposal endpoints and their release pins before
+enabling automatic model proposals:
+
+```bash
+BIREFNET_ENDPOINT='https://matting.internal/birefnet' \
+BIREFNET_MODEL_VERSION='<pinned-release>' \
+BIREFNET_MODEL_LICENSE='<recorded-license>' \
+BIREFNET_WEIGHTS_SHA256='<64-lowercase-hex-characters>' \
+BEN2_ENDPOINT='https://matting.internal/ben2' \
+BEN2_MODEL_VERSION='<pinned-release>' \
+BEN2_MODEL_LICENSE='<recorded-license>' \
+BEN2_WEIGHTS_SHA256='<64-lowercase-hex-characters>' \
+make service
+```
+
+The service rejects missing or mismatched model metadata and does not fall
+back to a color heuristic. SAM 2.1 protection and optional ViTMatte refinement
+require their own deployment adapter and release manifest; see
+`docs/deployment/model-stack.md`.
+
+The reviewer receives checkpoint artwork, mask and dark-garment previews. It
+must return a typed acceptance or one hash-bound grayscale correction carrier;
+it cannot return Photopea scripts. If this endpoint is absent or invalid, the
+service fails closed with `review_required`/failed instead of passing PSD.
+
 Core PNG, mask and preview artifacts are produced before the Photopea adapter
 is scheduled. PSD export runs in a separate background executor and updates the
 same job when it completes; clients can download the core artifacts while PSD
@@ -70,16 +104,21 @@ Photopea export the service MUST return `review_required` rather than claiming
 a completed PSD job.
 
 The Photopea session uses a raster mask carrier and canonical charID mask
-creation; polygon selection plans are rejected. Until the same-document
-checkpoint and pixel round-trip fixture passes against the deployed Photopea
-runtime, a mask-session error is explicitly `review_required`/failed; it is
-never silently replaced with generated PNG layers.
+creation; polygon selection plans are rejected. The initial checkpoint is
+authored in one Photopea document. Revisions stay in one live browser session
+and rebuild the editable document from the original source plus one typed
+correction carrier because the deployed scripting runtime cannot safely append
+to the previously masked document. A mask-session error is explicitly
+`review_required`/failed; it is never silently replaced with generated PNG
+layers.
 
 For iterative review, the bridge exposes `POST /v1/photopea/sessions`,
 `POST /v1/photopea/sessions/{id}/revisions`, and
 `POST /v1/photopea/sessions/{id}/finalize`. The revision endpoint keeps one
-Photopea document alive and requires matching source, checkpoint, and parent
-revision hashes.
+Photopea browser session alive and requires matching source, checkpoint, and
+parent revision hashes. Each revision returns a newly rebuilt editable
+Photopea document and checkpoint; this is deliberately not described as
+literal same-document mutation.
 
 The Skill helper waits for the PSD stage by default. Use `--core-only` only for
 diagnostics; that mode is not a complete print artifact and must be reported as

@@ -48,7 +48,8 @@ def test_async_job_contract_and_artifacts(tmp_path: Path) -> None:
     assert response.status_code == 202
     job_id = response.json()["job_id"]
     terminal = _wait_for_terminal(client, job_id)
-    assert terminal["status"] in {"passed", "review_required", "refused"}
+    assert terminal["status"] == "review_required"
+    assert "model_proposal" in terminal["report"]["validation"]["review_regions"]
     artifacts = client.get(f"/v1/jobs/{job_id}/artifacts").json()["artifacts"]
     names = {item["name"] for item in artifacts}
     assert "artwork_editable.psd" in names
@@ -83,6 +84,20 @@ def test_auth_and_invalid_policy(tmp_path: Path) -> None:
         headers={"Authorization": "Bearer secret"},
     )
     assert invalid.status_code == 422
+
+
+def test_public_job_rejects_authoritative_photopea_mask(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path, psd_exporter=FakePhotopeaExporter()))
+    response = client.post(
+        "/v1/jobs",
+        files={
+            "source": ("art.png", _source(), "image/png"),
+            "photopea_mask": ("mask.png", _source(), "image/png"),
+        },
+        data={"policy_json": "{}", "manifest_json": "{}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "forbidden_final_mask_input"
 
 
 def test_artifact_paths_reject_traversal(tmp_path: Path) -> None:

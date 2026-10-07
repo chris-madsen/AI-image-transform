@@ -4,8 +4,8 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 
-from printify_artwork_cleaner.domain.image_math import inspect_rgba, protected_mask
-from printify_artwork_cleaner.domain.models import JobStatus, ProcessingPolicy, ResolvedMaskBundle, VisualQualityAssessment
+from printify_artwork_cleaner.domain.image_math import canonical_png_sha256, inspect_rgba, protected_mask
+from printify_artwork_cleaner.domain.models import JobStatus, MaskTuning, ProcessingPolicy, ResolvedMaskBundle, VisualQualityAssessment
 from printify_artwork_cleaner.domain.validation import validate_candidate
 from printify_artwork_cleaner.application import process_image_bytes
 from printify_artwork_cleaner.domain.rendering import composite, dtg_underbase_preview
@@ -119,6 +119,22 @@ def test_missing_per_artwork_mask_tuning_is_review_required(tmp_path) -> None:
     assert report.stage_status.ai_mask_status == "review_required"
 
 
+def test_runtime_evidence_uses_canonical_rgba_source_hash(tmp_path) -> None:
+    source = np.full((8, 8, 4), [100, 120, 140, 255], dtype=np.uint8)
+    stream = BytesIO()
+    # Deliberately make upload bytes differ from the canonical adapter PNG via
+    # metadata; the normalized RGBA pixels must remain the identity boundary.
+    Image.fromarray(source, mode="RGBA").save(stream, format="PNG", dpi=(72, 72))
+    source_sha256 = canonical_png_sha256(source)
+    policy = ProcessingPolicy(
+        mask_tuning=MaskTuning(8, 24, 220, 4, 0.99, "canonical-source-regression", source_sha256),
+        visual_quality=VisualQualityAssessment("fixture", 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, source_sha256),
+    )
+    report = process_image_bytes(stream.getvalue(), policy, tmp_path)
+    assert "vision_mask_tuning_source_mismatch" not in report.validation.warnings
+    assert "visual_quality_source_mismatch" not in report.validation.warnings
+
+
 def test_low_visual_quality_overrides_a_valid_pixel_candidate(tmp_path) -> None:
     stream = BytesIO()
     Image.fromarray(np.full((8, 8, 4), [100, 120, 140, 255], dtype=np.uint8), mode="RGBA").save(stream, format="PNG")
@@ -146,16 +162,20 @@ def test_supplied_pixel_protection_survives_removal(tmp_path) -> None:
     assert report.stage_status.ai_mask_status == "provided"
 
 
-def test_authoritative_raster_mask_is_used_for_every_emitted_variant(tmp_path) -> None:
+def test_internal_model_proposal_alpha_is_not_promoted_to_output(tmp_path) -> None:
     source = np.full((8, 8, 4), [100, 120, 140, 255], dtype=np.uint8)
     stream = BytesIO()
     Image.fromarray(source, mode="RGBA").save(stream, format="PNG")
     accepted = np.zeros((8, 8), dtype=np.uint8)
     accepted[2:6, 2:6] = 173
-    report = process_image_bytes(stream.getvalue(), ProcessingPolicy(), tmp_path, authoritative_mask=accepted)
+    report = process_image_bytes(
+        stream.getvalue(), ProcessingPolicy(), tmp_path,
+        resolved_masks=ResolvedMaskBundle(proposed_alpha=accepted, removable_background=np.ones((8, 8), dtype=bool), provenance=("birefnet",), confidence=1.0),
+    )
     for name in ("conservative", "artistic"):
         output = np.asarray(Image.open(tmp_path / f"artwork_{name}.png"))
-        assert np.array_equal(output[..., 3], accepted)
+        assert not np.array_equal(output[..., 3], accepted)
+        assert np.count_nonzero(output[..., 3]) == 0
     assert report.status is JobStatus.REVIEW_REQUIRED
 
 

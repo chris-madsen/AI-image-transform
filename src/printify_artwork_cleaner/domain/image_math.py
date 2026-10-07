@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections import deque
+import io
 from hashlib import sha256
 
 import numpy as np
+from PIL import Image
 
 from .models import (
     AlphaProfile,
@@ -15,6 +16,17 @@ from .models import (
 
 def image_sha256(rgba: np.ndarray) -> str:
     return sha256(np.ascontiguousarray(rgba).tobytes()).hexdigest()
+
+
+def canonical_rgba_png_bytes(rgba: np.ndarray) -> bytes:
+    """Serialize the normalized RGBA source exactly as external adapters do."""
+    stream = io.BytesIO()
+    Image.fromarray(np.asarray(rgba, dtype=np.uint8), mode="RGBA").save(stream, format="PNG", optimize=False)
+    return stream.getvalue()
+
+
+def canonical_png_sha256(rgba: np.ndarray) -> str:
+    return sha256(canonical_rgba_png_bytes(rgba)).hexdigest()
 
 
 def alpha_profile(rgba: np.ndarray) -> AlphaProfile:
@@ -37,7 +49,14 @@ def _border_pixels(rgb: np.ndarray) -> np.ndarray:
 
 
 def edge_connected_background_mask(rgba: np.ndarray, tolerance: int) -> np.ndarray:
-    """Return only pixels connected to the canvas edge and close to border color."""
+    """Return the 4-connected edge selection used by Photopea's Magic Wand.
+
+    The previous pixel-at-a-time queue had the right semantics but was not
+    viable for 4500x5400 artwork.  Run-length connected-component labeling is
+    equivalent for a binary eligible image, avoids a dependency on OpenCV or
+    SciPy, and keeps the full-resolution selection inside the five-minute job
+    budget.
+    """
     rgb = np.asarray(rgba[..., :3], dtype=np.int16)
     alpha = np.asarray(rgba[..., 3], dtype=np.uint8)
     height, width = alpha.shape
@@ -46,27 +65,61 @@ def edge_connected_background_mask(rgba: np.ndarray, tolerance: int) -> np.ndarr
     distance = np.max(np.abs(rgb - reference), axis=-1)
     eligible = distance <= int(tolerance)
     eligible |= alpha == 0
+    rows: list[list[tuple[int, int, int]]] = []
+    parent: list[int] = []
+
+    def new_label() -> int:
+        label = len(parent)
+        parent.append(label)
+        return label
+
+    def find(label: int) -> int:
+        root = label
+        while parent[root] != root:
+            root = parent[root]
+        while parent[label] != label:
+            next_label = parent[label]
+            parent[label] = root
+            label = next_label
+        return root
+
+    def union(first: int, second: int) -> None:
+        first_root, second_root = find(first), find(second)
+        if first_root != second_root:
+            parent[second_root] = first_root
+
+    previous: list[tuple[int, int, int]] = []
+    for y in range(height):
+        row = eligible[y]
+        starts = np.flatnonzero(row & ~np.r_[False, row[:-1]])
+        ends = np.flatnonzero(row & ~np.r_[row[1:], False])
+        current: list[tuple[int, int, int]] = []
+        previous_index = 0
+        for start, end in zip(starts.tolist(), ends.tolist()):
+            while previous_index < len(previous) and previous[previous_index][1] < start:
+                previous_index += 1
+            overlaps: list[int] = []
+            scan_index = previous_index
+            while scan_index < len(previous) and previous[scan_index][0] <= end:
+                overlaps.append(previous[scan_index][2])
+                scan_index += 1
+            label = overlaps[0] if overlaps else new_label()
+            for other in overlaps[1:]:
+                union(label, other)
+            current.append((start, end, label))
+        rows.append(current)
+        previous = current
+
+    border_roots: set[int] = set()
+    for row_index in (0, height - 1):
+        border_roots.update(find(label) for _, _, label in rows[row_index])
+    border_roots.update(find(label) for row in rows for start, end, label in row if start == 0 or end == width - 1)
+
     mask = np.zeros((height, width), dtype=bool)
-    queue: deque[tuple[int, int]] = deque()
-
-    def seed(y: int, x: int) -> None:
-        if eligible[y, x] and not mask[y, x]:
-            mask[y, x] = True
-            queue.append((y, x))
-
-    for x in range(width):
-        seed(0, x)
-        seed(height - 1, x)
-    for y in range(1, height - 1):
-        seed(y, 0)
-        seed(y, width - 1)
-
-    while queue:
-        y, x = queue.popleft()
-        for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-            if 0 <= next_y < height and 0 <= next_x < width and eligible[next_y, next_x] and not mask[next_y, next_x]:
-                mask[next_y, next_x] = True
-                queue.append((next_y, next_x))
+    for y, row in enumerate(rows):
+        for start, end, label in row:
+            if find(label) in border_roots:
+                mask[y, start:end + 1] = True
     return mask
 
 

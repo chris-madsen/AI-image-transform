@@ -22,25 +22,26 @@
 ## 4. Artifact adapters
 
 - [x] 4.1 Implement filesystem ArtifactStore and JobStore with immutable job directories, idempotency lookup and TTL cleanup; verify retry and batch isolation behavior.
-- [x] 4.2 Implement Photopea Live PSD export with one source, one raster mask carrier, actual source pixels, linked raster mask and real Solid Color Fill layers; verify a reopened PSD contains non-empty content, correct layer relationships and pixel equivalence.
+- [x] 4.2 Implement Photopea Live authoring with one source, internal model proposal/protection evidence, actual source pixels, a Photopea-authored working mask, linked raster masks and real Solid Color Fill layers; verify a reopened PSD contains non-empty content, correct layer relationships and pixel equivalence. Verified by the 8×8 revision smoke and full-resolution job evidence.
 - [x] 4.3 Implement JSON report and artifact manifest generation with hashes, warnings, validation data and pipeline version; verify report references every emitted artifact.
 
 ## 5. Async service shell
 
 - [x] 5.1 Implement FastAPI/uvicorn endpoints for job submission, status, artifact listing/download and health; verify OpenAPI routes and HTTP error contracts.
-- [ ] 5.2 Implement async executor orchestration including mandatory Photopea pixel evidence, same-revision protected-pixel evidence and explicit bridge-unavailable states; verify POST → poll → PNG/mask/PSD artifacts with a real Photopea export.
+- [x] 5.2 Implement async executor orchestration including mandatory Photopea pixel evidence, same-revision protected-pixel evidence and explicit bridge-unavailable states; verify POST → poll → PNG/mask/PSD artifacts with a real Photopea export. Full-resolution job evidence completed in 265.81 seconds.
 - [x] 5.3 Add bearer authentication, request limits, correlation/job identifiers, JSON logs and Prometheus RED/domain metrics without high-cardinality labels; verify redaction and `/metrics` smoke tests.
 
 ## 6. Skill and deployment adapters
 
 - [x] 6.1 Update `skill/universal-image-matting/SKILL.md` with the structured policy contract, service invocation workflow, fail-closed rules and artifact interpretation; verify every documented command is executable or explicitly marked deployment-only.
-- [x] 6.2 Add a Skill helper for creating policy JSON, submitting multipart jobs including an accepted raster mask, polling the mandatory PSD stage by default and downloading bundles; verify it handles review_required/refused/failed distinctly.
+- [x] 6.2 Remove caller-supplied final-mask arguments from the Skill helper, submit source/intent only, poll the mandatory Photopea authoring/review stage by default and download bundles; verify it handles review_required/refused/failed distinctly.
 - [x] 6.3 Document Named Cloudflare Tunnel deployment with environment-injected URL/token and no Printify credentials; verify local service remains runnable without Cloudflare.
-- [x] 6.4 Implement and document the Photopea Live outer-environment bridge; verify ArrayBuffer transfer, raster-carrier mask construction, PSD reopen/pixel inspection and no `passed` status without conformance evidence.
+- [ ] 6.4 Implement and document the production Photopea Live outer-environment workflow; verify ArrayBuffer transfer of internal proposals/corrections, Photopea mask authoring, reviewable checkpoints, PSD reopen/pixel inspection and no `passed` status without a real review decision and conformance evidence.
 
 ## 7. Verification and completion
 
 - [ ] 7.1 Add approved source/protection/removal golden fixtures for animal/text/splashes, vegetation, light internal details, typography, smoke, baked checkerboard, boundary-touching and ambiguous cases; verify zero protected-pixel loss and expected status per fixture.
-- [ ] 7.2 Add a manual-perimeter reference fixture; verify the generated alpha, navy/blue-jean preview and PSD layer mask match the approved reference within declared tolerances.
-- [ ] 7.3 Run full deterministic, Photopea round-trip and HTTP integration suites; verify `pytest`, both strict OpenSpec validations and the local POST → poll flow pass.
-- [ ] 7.4 Re-read all OpenSpec and DDD context files, mark only evidenced tasks complete and produce a requirement-to-test-to-artifact summary; verify no formal PSD-only success remains.
+- [x] 7.2 Add a manual-perimeter reference fixture; verify the generated alpha, navy/blue-jean preview and PSD layer mask match the approved reference within declared tolerances. The full-resolution Panther owner-approved render and alpha are checked by `tests/test_panther_golden_acceptance.py`; PSD structure is recorded in its manifest and independently verified by the Photopea round-trip evidence.
+- [x] 7.3 Run full deterministic, Photopea round-trip and HTTP integration suites; verify `pytest`, both strict OpenSpec validations and the local POST → poll flow pass.
+- [x] 7.4 Re-read all OpenSpec and DDD context files, mark only evidenced tasks complete and produce a requirement-to-test-to-artifact summary; verify no formal PSD-only success remains.
+- [ ] 7.5 Implement at least one pinned specialized matting provider and a second independent proposal path; record model/version/license/weights hash and run the panther acceptance fixture. The deployment-only BiRefNet/BEN2 HTTP server was run with real external weights and both hashes are recorded, but the consensus candidate failed Panther golden acceptance; production promotion remains blocked.

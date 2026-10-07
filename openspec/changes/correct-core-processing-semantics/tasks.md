@@ -34,13 +34,16 @@
 ## 5. Photopea conformance
 
 - [x] 5.1 Replace URL-embedded full-size inputs with readiness-gated ArrayBuffer messaging.
-- [x] 5.2 Build one Photopea document with non-empty source, working-art and grayscale working-mask pixels, a linked raster mask and real independently toggleable garment fills; verify in a reopened PSD with pixel evidence.
+- [x] 5.2 Build one Photopea document in which Photopea authors the working mask from internal model proposal/protection evidence, with non-empty source/working-art pixels, linked raster masks and real independently toggleable garment fills; reject any caller-supplied authoritative `photopea_mask`. Verified by 8×8 revision smoke and full-resolution job-level evidence.
 - [x] 5.3 Add PSD round-trip fixture and structure/visual validation; verify mask equivalence and black/navy/blue-jean rendering before allowing `passed`.
-- [ ] 5.4 Run a full-resolution Photopea export from the job API within the five-minute bound; verify report evidence links to the exact returned PSD and no placeholder layer is accepted. The direct Photopea session/export gate now passes; the external job-level POST → poll proof remains pending.
-- [x] 5.5 Replace the seven-PNG PSD path with a single-source Photopea session that imports one raster mask carrier and creates linked masks from carrier transparency inside Photopea.
-- [x] 5.6 Add checkpoint/correction protocol and a bounded vision review loop using hash-bound raster revisions; reject arbitrary scripts, stale revisions and polygon plans.
+- [x] 5.4 Run a full-resolution Photopea export from the job API within the five-minute bound; verify report evidence links to the exact returned PSD and no placeholder layer is accepted. `artifacts/photopea-full-smoke-current-20261006/job-evidence.json`: Panther 4500×5400, POST→poll `passed`, verified PSD, 265.81 seconds.
+- [x] 5.5 Replace the seven-PNG PSD path with a single-source Photopea authoring session that consumes only internal model proposal/protection evidence and reviewed corrections; remove `photopea_mask` from the public job/helper contract. Revisions use one live browser session and source+correction-mask ArrayBuffers, rebuilding the editable Photopea document without seven PNG inputs.
+- [ ] 5.6 Wire the checkpoint/correction protocol and bounded vision review loop into the production job runtime using a concrete provider and hash-bound revisions; reject arbitrary scripts, stale revisions and polygon plans. The typed HTTP provider and live deterministic correction fixture are implemented; deployment of the external reviewer remains.
+- [x] 5.7 Return retrievable checkpoint artwork, mask and black/navy/blue-jean preview bytes or authenticated URLs to the vision provider; hashes alone are not review evidence. Full job smoke downloads the authenticated checkpoint set; production vision consumption remains a provider configuration concern.
+- [ ] 5.8 Implement and configure a specialized proposal stack (initial target: BiRefNet HR-matting, BEN2, SAM 2.1 protection and optional ViTMatte refinement) with pinned versions, licenses and weights hashes. BiRefNet, BEN2 and SAM 2.1 were loaded in local CPU smoke tests; SAM protection is not wired into production and the BiRefNet/BEN2 consensus failed the Panther golden visual gate.
+- [x] 5.9 Add the full-resolution panther as an approved golden acceptance fixture and fail on lost ears, eyes, whiskers, head foliage, lower fade or external-edge continuity. `tests/fixtures/panther_golden/` and `tests/test_panther_golden_acceptance.py` validate the owner-approved `RESTORED` render extracted from the local reference PSD.
 
 ## 6. Evidence
 
 - [x] 6.1 Run Python, bridge, OpenSpec and security regression suites.
-- [x] 6.2 Produce a requirement-to-test-to-artifact evidence matrix and update only justified checkboxes.
+- [x] 6.2 Reconcile the requirement-to-test-to-artifact evidence matrix after the corrected mask-ownership design and update only justified checkboxes. PSD binaries remain outside Git; reproducible commands, hashes and logs are recorded under ignored `artifacts/photopea-full-smoke-current-20261006/`.

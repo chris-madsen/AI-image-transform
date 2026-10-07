@@ -63,15 +63,18 @@ documents for the PSD path.
 
 #### Scenario: iterative correction
 - **WHEN** vision review identifies lost detail or external debris
-- **THEN** the bridge applies a typed raster correction revision to the same Photopea
-  document and returns a new checkpoint without reopening seven image files
+- **THEN** the bridge applies a typed raster correction revision in the same live
+  Photopea browser session, rebuilding the editable document from the original
+  source plus one carrier without reopening seven image files
 
 #### Scenario: session transport
 - **WHEN** the Skill calls `POST /v1/photopea/sessions`, then submits a revision to
   `/v1/photopea/sessions/{id}/revisions`
-- **THEN** the bridge keeps one browser/document alive, returns a checkpoint after
+- **THEN** the bridge keeps one browser session alive, returns a checkpoint after
   each revision, and accepts only one raster carrier with matching source,
-  checkpoint and parent hashes
+  checkpoint and parent hashes; a revision may rebuild the editable document
+  because literal same-document mutation is not reliable in the deployed
+  Photopea scripting runtime
 
 ### Requirement: bounded vision review loop
 The Skill MUST be able to request a checkpoint, pass it through a vision

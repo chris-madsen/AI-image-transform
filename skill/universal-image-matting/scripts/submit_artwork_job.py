@@ -47,7 +47,6 @@ def request(url: str, *, method: str = "GET", data: bytes | None = None, content
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
-    parser.add_argument("--photopea-mask", type=Path, help="Accepted grayscale/alpha mask carrier PNG")
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=900)
@@ -57,8 +56,6 @@ def main() -> int:
     token = os.environ.get("ARTWORK_SERVICE_TOKEN")
     policy = json.loads(args.policy.read_text(encoding="utf-8"))
     files = [("source", args.source.name, args.source.read_bytes(), "application/octet-stream")]
-    if args.photopea_mask:
-        files.append(("photopea_mask", args.photopea_mask.name, args.photopea_mask.read_bytes(), "image/png"))
     payload, content_type = multipart(
         {"policy_json": json.dumps(policy, ensure_ascii=False), "manifest_json": json.dumps({"client": "universal-image-matting-skill"})},
         files,

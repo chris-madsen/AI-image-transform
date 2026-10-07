@@ -37,6 +37,7 @@ class PhotopeaSessionCheckpoint:
     checkpoint_sha256: str
     mask_sha256: str
     artwork_sha256: str
+    artifact_urls: tuple[tuple[str, str], ...] = ()
 
 
 def _png_bytes(rgba: np.ndarray) -> bytes:
@@ -226,6 +227,7 @@ class PhotopeaSessionClient:
                 checkpoint_sha256=str(checkpoint["checkpoint_sha256"]),
                 mask_sha256=str(checkpoint["mask_sha256"]),
                 artwork_sha256=str(checkpoint["artwork_sha256"]),
+                artifact_urls=tuple(sorted((str(key), str(value)) for key, value in (checkpoint.get("artifact_urls") or {}).items())),
             )
         except (KeyError, TypeError) as exc:
             raise PhotopeaLiveApiUnavailable("invalid Photopea checkpoint") from exc
@@ -286,6 +288,23 @@ class PhotopeaSessionClient:
             raise PhotopeaLiveApiUnavailable("Photopea final evidence is not bound to the accepted checkpoint")
         self.session_id = None
         return payload, evidence
+
+    def download_checkpoint(self) -> dict[str, bytes]:
+        """Download exact checkpoint images before finalizing the session."""
+        if self.checkpoint is None:
+            raise PhotopeaLiveApiUnavailable("Photopea session has no checkpoint")
+        result: dict[str, bytes] = {}
+        for label, path in self.checkpoint.artifact_urls:
+            url = path if path.startswith("http") else f"{self.api_url}{path}"
+            try:
+                with urlopen(Request(url, headers=self._headers(), method="GET"), timeout=self.timeout) as response:
+                    result[label] = response.read()
+            except (HTTPError, URLError, TimeoutError) as exc:
+                raise PhotopeaLiveApiUnavailable(f"checkpoint artifact {label} unavailable: {exc}") from exc
+        required = {"artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"}
+        if set(result) != required:
+            raise PhotopeaLiveApiUnavailable("Photopea checkpoint did not expose all required review artifacts")
+        return result
 
     def close(self) -> None:
         if not self.session_id:

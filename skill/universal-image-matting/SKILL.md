@@ -37,47 +37,13 @@ Example policy:
   "target_garments": ["black", "navy", "blue_jean", "white"],
   "edge_strategy": "auto_print_safe",
   "requested_variants": ["conservative", "artistic"],
-  "mask_tuning": {
-    "decision_id": "vision-review-<source-hash>-r1",
-    "source_sha256": "<64-hex-source-hash>",
-    "background_tolerance": 8,
-    "fade_low_distance": 4,
-    "fade_full_distance": 64,
-    "fade_band_radius": 4,
-    "confidence": 0.91
-  },
-  "visual_quality": {
-    "reference_id": "manual-perimeter-panther-v1",
-    "source_sha256": "<64-hex-source-hash>",
-    "checkpoint_sha256": "<64-hex-checkpoint-hash>",
-    "overall_score": 0.92,
-    "subject_integrity": 0.98,
-    "intentional_detail_score": 0.90,
-    "edge_naturalness": 0.88,
-    "artifact_free_score": 0.94,
-    "confidence": 0.91,
-    "reviewer_notes": ["Keep the panther, eyes, whiskers, and expressive foliage intact."]
-  },
-  "photopea_mask_revision": {
-    "revision_id": "mask-<source-hash>-r1",
-    "parent_revision_id": null,
-    "source_sha256": "<64-hex-source-hash>",
-    "checkpoint_sha256": "<64-hex-checkpoint-hash>",
-    "base_mask_sha256": "<64-hex-base-mask-hash>",
-    "result_mask_sha256": "<64-hex-result-mask-hash>",
-    "operation": "replace_mask",
-    "confidence": 0.92
-  }
 }
 ```
 
-`mask_tuning` is not a project default. The vision/agent boundary MUST choose
-it from the current source image and candidate previews, and record a new
-`decision_id` for every mask revision. After the service emits candidate PNGs
-and garment previews, the agent MUST inspect those intermediate artifacts and
-either submit a revised policy/mask or accept the result. The service does not
-call GPT implicitly and does not substitute fixed values when this decision is
-absent; a missing or low-confidence decision remains `review_required`.
+Model tuning, visual assessment and raster revisions are runtime evidence. They
+are created by the configured proposal/review adapters from the current source
+and exact checkpoint artifacts; they must not be copied into the initial public
+policy.
 
 `visual_quality` is a required agent/vision judgement for a finished result.
 It is not a decorative score: the service combines it with deterministic
@@ -85,19 +51,21 @@ fragmentation checks and refuses to pass a candidate with a torn edge,
 isolated debris, lost intentional details, or low confidence. A text-only
 description is never treated as visual understanding.
 
-`photopea_mask_revision` is an agent/vision output bound to one grayscale/alpha
-mask PNG uploaded with the job. It is a frozen typed revision, not JavaScript
-and not a polygon approximation. The revision MUST bind `source_sha256`,
+The public job never uploads a finished mask. Internal model proposals and
+review corrections are frozen typed revisions bound to `source_sha256`,
 `checkpoint_sha256`, `base_mask_sha256` and `result_mask_sha256`; stale or
-cross-artwork hashes are rejected. Corrections create a new revision with a
-`parent_revision_id`. A missing revision or mask file must not trigger a
-Python-generated PSD fallback; the PSD stage remains review-required or failed.
+cross-artwork revisions are rejected. A missing proposal/reviewer must not
+trigger a Python-generated PSD fallback; the PSD stage remains review-required
+or failed.
 
-The intended Photopea loop is `source + raster mask -> checkpoint -> vision
-review -> raster correction -> checkpoint`, in one bounded Photopea document.
-The bridge rejects arbitrary scripts and polygon plans immediately and does not
-claim that this loop is complete until a real same-document
-checkpoint/round-trip fixture passes.
+The intended Photopea loop is `source + internal model proposal -> Photopea
+authored mask -> checkpoint artifacts -> vision review -> internal raster
+correction -> checkpoint`, in one bounded Photopea browser session. The current
+bridge reconstructs the editable document from the original source plus one
+typed raster correction carrier for each revision; it does not import seven
+pre-rendered documents or claim literal same-document mutation. The bridge
+rejects arbitrary scripts and polygon plans and only accepts a PSD after a
+real checkpoint/round-trip fixture passes.
 
 The service returns PNG, masks, dark-garment previews, a JSON report and an
 editable PSD. `review_required`, `refused`, and `failed` are not successes and

@@ -1,0 +1,96 @@
+{
+  "fixture_id": "panther-approved-restored-v1",
+  "dimensions": [
+    4500,
+    5400
+  ],
+  "source_file": "source.png",
+  "approved_render_file": "approved_restored.png",
+  "approved_alpha_file": "approved_alpha.png",
+  "source_sha256": "a09d4e9392b336101360c57a406ef87f69b791edc35282b9c2e2a68e69c59e12",
+  "approved_render_file_sha256": "feb96f326f4aac0d095c638812db7945491731b7c312ecd162af7bc1e22f6845",
+  "approved_render_rgba_sha256": "271abc0b2a0932f6fc0540fc7b7a6832793d3934862a5c89829c6e89889d5e51",
+  "approved_alpha_sha256": "2555859694df7b4e921aa94556231950ddc496566b58bb898c225a541f869e50",
+  "approved_psd_sha256": "e33538a4b7b8deb2e39ca01f5fd21849f1db95622c1e7503a3d8ac7222d3f7ac",
+  "approved_psd_source": "local-owner-supplied-psd-not-committed",
+  "required_layers": [
+    {
+      "name": "Background copy",
+      "visible": false,
+      "kind": "pixel"
+    },
+    {
+      "name": "Layer 1",
+      "visible": true,
+      "kind": "pixel"
+    },
+    {
+      "name": "WITH GAPS",
+      "visible": false,
+      "kind": "pixel",
+      "has_raster_mask": true
+    },
+    {
+      "name": "RESTORED",
+      "visible": true,
+      "kind": "pixel",
+      "has_raster_mask": true
+    }
+  ],
+  "regions": {
+    "left_ear": [
+      850,
+      650,
+      2100,
+      1900
+    ],
+    "right_ear": [
+      2850,
+      650,
+      4100,
+      2000
+    ],
+    "eyes": [
+      1450,
+      1900,
+      3250,
+      3000
+    ],
+    "whiskers": [
+      700,
+      2700,
+      3700,
+      4000
+    ],
+    "head_foliage": [
+      550,
+      600,
+      4150,
+      2500
+    ],
+    "lower_fade": [
+      850,
+      3850,
+      3800,
+      5250
+    ]
+  },
+  "tolerances": {
+    "protected_region_rgb_max_delta": 0,
+    "protected_region_alpha_loss_pixels": 0,
+    "lower_fade_alpha_mae": 0.0,
+    "external_edge_alpha_loss_pixels": 0
+  },
+  "provenance": {
+    "approved_from_psd_layer": "RESTORED",
+    "approved_psd_layer_mask_offset": [
+      686,
+      694
+    ],
+    "approved_psd_layer_mask_size": [
+      3285,
+      4339
+    ],
+    "reviewed_reference": "/home/ilja/Music/final6_Panther_Printify_Clean_Transparent_4500x5400_fina6l.psd"
+  }
+}

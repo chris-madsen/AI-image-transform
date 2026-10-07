@@ -12,6 +12,8 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+*.psd
+*.psb
 
 # Runtime/generated data
 artifacts/*

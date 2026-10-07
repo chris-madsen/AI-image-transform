@@ -197,17 +197,11 @@ function photopeaRasterMaskScript({ finalize = true } = {}) {
         fills[2].move(restored, ElementPlacement.PLACEAFTER);
         hideAll(document);
         restored.visible = true;
-        exportPng(document, "artwork");
-        exportMaskView(document, workingMask, "mask");
-        exportLayerView(document, restored, fills[0], "preview_black");
-        exportLayerView(document, restored, fills[1], "preview_navy");
-        exportLayerView(document, restored, fills[2], "preview_blue_jean");
         hideAll(document);
         restored.visible = true;
         document.activeLayer = restored;
         message("PHOTOPEA_STRUCTURE_BUILT");
         message("PHOTOPEA_MASK_VERIFIED");
-        message("PHOTOPEA_CHECKPOINT_READY");
         if (${finalize ? "true" : "false"}) {
           document.clearHistory();
           message("PHOTOPEA_EXPORT:psd");
@@ -359,26 +353,22 @@ function photopeaRevisionScript(revisionId, { finalize = false } = {}) {
         exportPng(document, label);
       }
       function buildRevision() {
-        var outputDocument = null;
-        for (var documentIndex = 0; documentIndex < app.documents.length; documentIndex += 1) {
-          if (findLayer(app.documents[documentIndex], "SOURCE BACKUP")) outputDocument = app.documents[documentIndex];
-        }
+        var document = null;
         var sourceDocument = null;
-        for (var sourceIndex = 0; sourceIndex < app.documents.length; sourceIndex += 1) {
-          if (app.documents[sourceIndex].name === "SOURCE INPUT") sourceDocument = app.documents[sourceIndex];
-        }
         var carrierDocument = null;
+        for (var documentIndex = 0; documentIndex < app.documents.length; documentIndex += 1) {
+          if (String(app.documents[documentIndex].name) === "SOURCE INPUT") sourceDocument = app.documents[documentIndex];
+        }
         for (var carrierIndex = 0; carrierIndex < app.documents.length; carrierIndex += 1) {
           var candidate = app.documents[carrierIndex];
-          if (candidate !== outputDocument && candidate !== sourceDocument && candidate.artLayers && candidate.artLayers.length) carrierDocument = candidate;
+          if (candidate !== sourceDocument && candidate.artLayers && candidate.artLayers.length) carrierDocument = candidate;
         }
         if (!sourceDocument || !carrierDocument) throw new Error("source and revision mask documents are required");
         var source = sourceDocument.artLayers[0];
         var carrier = carrierDocument.artLayers[0];
         if (!source || !carrier) throw new Error("source or revision carrier layer is missing");
         app.activeDocument = sourceDocument;
-        var document = sourceDocument;
-        if (outputDocument && outputDocument !== sourceDocument && outputDocument !== carrierDocument) outputDocument.close(SaveOptions.DONOTSAVECHANGES);
+        document = sourceDocument;
         source.name = "SOURCE BACKUP";
         source.visible = true;
         var maskCarrier = copyLayer(carrierDocument, document, "MASK CARRIER " + ${safeRevisionId}, carrier);
@@ -402,13 +392,9 @@ function photopeaRevisionScript(revisionId, { finalize = false } = {}) {
         fills[0].move(restored, ElementPlacement.PLACEAFTER);
         fills[1].move(restored, ElementPlacement.PLACEAFTER);
         fills[2].move(restored, ElementPlacement.PLACEAFTER);
-        hideAll(document); restored.visible = true; exportPng(document, "artwork");
-        exportMaskView(document, workingMask, "mask");
-        exportLayerView(document, restored, fills[0], "preview_black");
-        exportLayerView(document, restored, fills[1], "preview_navy");
-        exportLayerView(document, restored, fills[2], "preview_blue_jean");
+        hideAll(document); restored.visible = true;
         document.activeLayer = restored;
-        message("PHOTOPEA_CHECKPOINT_READY");
+        message("PHOTOPEA_REVISION_BUILT");
         if (${finalize ? "true" : "false"}) { document.clearHistory(); message("PHOTOPEA_EXPORT:psd"); document.saveToOE("psd:true"); }
       }
       try { buildRevision(); } catch (error) { message("PHOTOPEA_REVISION_FAILED:" + String(error)); }
@@ -435,28 +421,27 @@ function photopeaRoundTripScript(label) {
   return `
     (function () {
       function message(value) { app.echoToOE(value); }
-      function findLayer(document, name) {
-        var exact = null; var prefixed = null;
-        for (var index = document.layers.length - 1; index >= 0; index -= 1) {
-          var layerName = String(document.layers[index].name);
-          if (!exact && layerName === name) exact = document.layers[index];
-          var prefix = name + " ";
-          var basePrefix = name + " BASE";
-          if (!prefixed && layerName.slice(0, prefix.length) === prefix && layerName.slice(0, basePrefix.length) !== basePrefix) prefixed = document.layers[index];
-        }
-        return prefixed || exact || null;
+      function matches(layerName, name) {
+        return layerName === name || (layerName.slice(0, name.length + 1) === name + " " && layerName.slice(0, name.length + 5) !== name + " BASE");
       }
-      function hideAll(document) {
-        for (var index = 0; index < document.layers.length; index += 1) document.layers[index].visible = false;
+      function layerIndex(document, name) {
+        for (var index = document.layers.length - 1; index >= 0; index -= 1) if (matches(String(document.layers[index].name), name)) return index;
+        return -1;
       }
-      function showOnly(document, visibleLayers, activeLayer) {
+      function showOnly(document, visibleNames, activeName) {
         app.activeDocument = document;
-        for (var visibleIndex = 0; visibleIndex < visibleLayers.length; visibleIndex += 1) visibleLayers[visibleIndex].visible = true;
-        document.activeLayer = activeLayer;
-        for (var layerIndex = 0; layerIndex < document.layers.length; layerIndex += 1) {
-          var keep = false;
-          for (var keepIndex = 0; keepIndex < visibleLayers.length; keepIndex += 1) if (document.layers[layerIndex].name === visibleLayers[keepIndex].name) keep = true;
-          if (!keep) document.layers[layerIndex].visible = false;
+        var activeIndex = layerIndex(document, activeName);
+        if (activeIndex < 0) throw new Error("round-trip active layer missing: " + activeName);
+        document.activeLayer = document.layers[activeIndex];
+        var managedNames = ["RESTORED", "WORKING MASK", "BLACK (COLOR FILL)", "NAVY (COLOR FILL)", "BLUE JEAN (COLOR FILL)"];
+        for (var managedIndex = 0; managedIndex < managedNames.length; managedIndex += 1) {
+          var managedLayerIndex = layerIndex(document, managedNames[managedIndex]);
+          if (managedLayerIndex >= 0 && managedLayerIndex !== activeIndex) document.layers[managedLayerIndex].visible = false;
+        }
+        for (var visibleIndex = 0; visibleIndex < visibleNames.length; visibleIndex += 1) {
+          var visibleLayerIndex = layerIndex(document, visibleNames[visibleIndex]);
+          if (visibleLayerIndex < 0) throw new Error("round-trip layer missing: " + visibleNames[visibleIndex]);
+          document.layers[visibleLayerIndex].visible = true;
         }
       }
       function exportPng(document, label) {
@@ -469,24 +454,14 @@ function photopeaRoundTripScript(label) {
       }
       try {
         var document = app.activeDocument;
-        var workingMask = document.layers[0];
-        var restored = document.layers[1];
-        var blueJean = document.layers[2];
-        var navy = document.layers[3];
-        var black = document.layers[4];
-        var maskBase = document.layers[5];
-        var withGaps = document.layers[6];
-        var source = document.layers[7];
-        if (!source || !restored || !withGaps || !maskBase || !workingMask || !black || !navy || !blueJean) throw new Error("required layer missing");
-        var layerOrder = [workingMask, restored, blueJean, navy, black, maskBase, withGaps, source];
-        var expectedNames = ["WORKING MASK ", "RESTORED ", "BLUE JEAN (COLOR FILL) ", "NAVY (COLOR FILL) ", "BLACK (COLOR FILL) ", "WORKING MASK BASE ", "WITH GAPS ", "SOURCE BACKUP"];
-        for (var orderIndex = 0; orderIndex < expectedNames.length; orderIndex += 1) if (String(layerOrder[orderIndex].name).slice(0, expectedNames[orderIndex].length) !== expectedNames[orderIndex]) throw new Error("round-trip layer order mismatch at " + orderIndex + ": " + String(layerOrder[orderIndex].name));
+        var requiredNames = ["WORKING MASK", "RESTORED", "BLUE JEAN (COLOR FILL)", "NAVY (COLOR FILL)", "BLACK (COLOR FILL)", "WORKING MASK BASE", "WITH GAPS", "SOURCE BACKUP"];
+        for (var requiredIndex = 0; requiredIndex < requiredNames.length; requiredIndex += 1) if (layerIndex(document, requiredNames[requiredIndex]) < 0) throw new Error("round-trip required layer missing: " + requiredNames[requiredIndex]);
         var label = ${safeLabel};
-        if (label === "artwork") { showOnly(document, [restored], restored); exportPng(document, label); }
-        else if (label === "mask") exportMaskView(document, workingMask, label);
-        else if (label === "preview_black") { showOnly(document, [black, restored], restored); exportPng(document, label); }
-        else if (label === "preview_navy") { showOnly(document, [navy, restored], restored); exportPng(document, label); }
-        else if (label === "preview_blue_jean") { showOnly(document, [blueJean, restored], restored); exportPng(document, label); }
+        if (label === "artwork") { showOnly(document, ["RESTORED"], "RESTORED"); exportPng(document, label); }
+        else if (label === "mask") { showOnly(document, ["WORKING MASK"], "WORKING MASK"); exportPng(document, label); }
+        else if (label === "preview_black") { showOnly(document, ["BLACK (COLOR FILL)", "RESTORED"], "RESTORED"); exportPng(document, label); }
+        else if (label === "preview_navy") { showOnly(document, ["NAVY (COLOR FILL)", "RESTORED"], "RESTORED"); exportPng(document, label); }
+        else if (label === "preview_blue_jean") { showOnly(document, ["BLUE JEAN (COLOR FILL)", "RESTORED"], "RESTORED"); exportPng(document, label); }
         else throw new Error("unsupported round-trip export label: " + label);
       } catch (error) { message("PHOTOPEA_ROUNDTRIP_FAILED:" + String(error)); }
     })();
@@ -632,6 +607,56 @@ function validatePixelEvidence(inputFiles, checkpoints, roundTrip, revision) {
   };
 }
 
+function photopeaCheckpointExportScript(label) {
+  const safeLabel = JSON.stringify(String(label));
+  return `
+    (function () {
+      function message(value) { app.echoToOE(value); }
+      function matches(layerName, name) {
+        return layerName === name || (layerName.slice(0, name.length + 1) === name + " " && layerName.slice(0, name.length + 5) !== name + " BASE");
+      }
+      function layerIndex(document, name) {
+        for (var index = document.layers.length - 1; index >= 0; index -= 1) if (matches(String(document.layers[index].name), name)) return index;
+        return -1;
+      }
+      function hideAll(document) {
+        app.activeDocument = document;
+        for (var index = 0; index < document.layers.length; index += 1) document.layers[index].visible = false;
+      }
+      function showOnly(document, visibleNames, activeName) {
+        app.activeDocument = document;
+        var activeIndex = layerIndex(document, activeName);
+        if (activeIndex < 0) throw new Error("active checkpoint layer missing: " + activeName);
+        document.activeLayer = document.layers[activeIndex];
+        var managedNames = ["RESTORED", "WORKING MASK", "BLACK (COLOR FILL)", "NAVY (COLOR FILL)", "BLUE JEAN (COLOR FILL)"];
+        for (var managedIndex = 0; managedIndex < managedNames.length; managedIndex += 1) {
+          var managedLayerIndex = layerIndex(document, managedNames[managedIndex]);
+          if (managedLayerIndex >= 0 && managedLayerIndex !== activeIndex) document.layers[managedLayerIndex].visible = false;
+        }
+        for (var visibleIndex = 0; visibleIndex < visibleNames.length; visibleIndex += 1) {
+          var visibleLayerIndex = layerIndex(document, visibleNames[visibleIndex]);
+          if (visibleLayerIndex < 0) throw new Error("checkpoint layer missing: " + visibleNames[visibleIndex]);
+          document.layers[visibleLayerIndex].visible = true;
+        }
+      }
+      function exportPng(document, name) {
+        message("PHOTOPEA_EXPORT:" + name);
+        document.saveToOE("png");
+      }
+      try {
+        var document = app.activeDocument;
+        var name = ${safeLabel};
+        if (name === "artwork") { showOnly(document, ["RESTORED"], "RESTORED"); exportPng(document, name); }
+        else if (name === "mask") { showOnly(document, ["WORKING MASK"], "WORKING MASK"); exportPng(document, name); }
+        else if (name === "preview_black") { showOnly(document, ["BLACK (COLOR FILL)", "RESTORED"], "RESTORED"); exportPng(document, name); }
+        else if (name === "preview_navy") { showOnly(document, ["NAVY (COLOR FILL)", "RESTORED"], "RESTORED"); exportPng(document, name); }
+        else if (name === "preview_blue_jean") { showOnly(document, ["BLUE JEAN (COLOR FILL)", "RESTORED"], "RESTORED"); exportPng(document, name); }
+        else throw new Error("unsupported checkpoint label: " + name);
+      } catch (error) { message("PHOTOPEA_STRUCTURE_FAILED:" + String(error)); }
+    })();
+  `;
+}
+
 function photopeaOuterPage(resultToken, inputTokens, initialScript, authorization) {
   return `
     <!doctype html><html><body><iframe id="photopea" style="width:1px;height:1px;border:0" src="https://www.photopea.com/#${encodeURIComponent(JSON.stringify({}))}"></iframe>
@@ -642,12 +667,26 @@ function photopeaOuterPage(resultToken, inputTokens, initialScript, authorizatio
       const initialUrls = ['/v1/photopea/blob/${inputTokens.source}', '/v1/photopea/blob/${inputTokens.mask}'];
       let revisionUrls = [];
       const initialScript = ${JSON.stringify(initialScript)};
+      const checkpointScripts = ${JSON.stringify(["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"].map((label) => photopeaCheckpointExportScript(label)))};
       const roundtripScripts = ${JSON.stringify(["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"].map((label) => photopeaRoundTripScript(label)))};
+      let checkpointIndex = 0; let checkpointBinaryPosted = false;
+      function advanceCheckpointExport() {
+        if (!checkpointBinaryPosted) return;
+        checkpointBinaryPosted = false;
+        checkpointIndex += 1;
+        if (checkpointIndex < checkpointScripts.length) setTimeout(() => frame.contentWindow.postMessage(checkpointScripts[checkpointIndex], '*'), 2000);
+        else phase = 'checkpoint-complete';
+      }
       async function sendFile(index) { const buffer = await fetch(initialUrls[index]).then((response) => response.arrayBuffer()); frame.contentWindow.postMessage(buffer, '*', [buffer]); }
       function internalHeaders(contentType) { const headers = { 'Content-Type': contentType }; if (bridgeAuthorization) headers.Authorization = bridgeAuthorization; return headers; }
       async function receiveBinary(buffer) {
         const binaryLabel = exportLabels.shift() || '';
-        await fetch('/v1/photopea/result/${resultToken}', { method: 'POST', headers: Object.assign(internalHeaders('application/octet-stream'), { 'X-Photopea-Label': binaryLabel }), body: buffer });
+        try { await fetch('/v1/photopea/result/${resultToken}', { method: 'POST', headers: Object.assign(internalHeaders('application/octet-stream'), { 'X-Photopea-Label': binaryLabel }), body: buffer }); } catch (_) {}
+        if (phase === 'checkpoint-export' || phase === 'revision-export') {
+          checkpointBinaryPosted = true;
+          advanceCheckpointExport();
+          return;
+        }
         if (phase === 'roundtrip-export') {
           if (roundtripIndex < roundtripScripts.length - 1) {
             roundtripIndex += 1;
@@ -669,7 +708,8 @@ function photopeaOuterPage(resultToken, inputTokens, initialScript, authorizatio
           console.log('PHOTOPEA_MESSAGE:' + event.data);
           if (/^PHOTOPEA_(STRUCTURE|REVISION|FINALIZE|ROUNDTRIP)_FAILED:/.test(event.data)) { await signal('failure', event.data); return; }
           if (event.data.indexOf('PHOTOPEA_EXPORT:') === 0) { exportLabels.push(event.data.slice('PHOTOPEA_EXPORT:'.length)); return; }
-          if (event.data === 'PHOTOPEA_CHECKPOINT_READY') { await signal('checkpoint'); return; }
+          if (event.data === 'PHOTOPEA_STRUCTURE_BUILT' || event.data === 'PHOTOPEA_REVISION_BUILT') { checkpointIndex = 0; checkpointBinaryPosted = false; exportLabels = []; phase = event.data === 'PHOTOPEA_STRUCTURE_BUILT' ? 'checkpoint-export' : 'revision-export'; frame.contentWindow.postMessage(checkpointScripts[0], '*'); return; }
+          if (event.data === 'PHOTOPEA_CHECKPOINT_READY') { return; }
           if (event.data === 'PHOTOPEA_ROUNDTRIP_VERIFIED') { await signal('done'); return; }
         }
         if (event.data instanceof ArrayBuffer) { await receiveBinary(event.data); return; }
@@ -681,6 +721,7 @@ function photopeaOuterPage(resultToken, inputTokens, initialScript, authorizatio
         else if (phase === 'revision-source') { phase = 'revision-source-mark'; frame.contentWindow.postMessage('app.activeDocument.name = "SOURCE INPUT";', '*'); }
         else if (phase === 'revision-source-mark') { phase = 'revision-mask'; await sendRevisionFile(1); }
         else if (phase === 'revision-mask') { phase = 'revision-script'; frame.contentWindow.postMessage(pendingScript, '*'); }
+        else if (phase === 'checkpoint-export' || phase === 'revision-export') { return; }
         else if (phase === 'roundtrip-file') { phase = 'roundtrip-export'; roundtripIndex = 0; frame.contentWindow.postMessage(roundtripScripts[roundtripIndex], '*'); }
       });
     </script></body></html>`;
@@ -690,11 +731,12 @@ class PhotopeaLiveSession {
   constructor(browser, page, resultToken, inputFiles, revision, timeoutMs) {
     this.browser = browser; this.page = page; this.resultToken = resultToken;
     this.inputFiles = inputFiles; this.currentRevision = revision; this.timeoutMs = timeoutMs;
-    this.checkpoints = {}; this.roundTrip = {}; this.psd = null; this.phase = "boot";
+    this.checkpoints = {}; this.checkpointBytes = {}; this.roundTrip = {}; this.psd = null; this.phase = "boot"; this.checkpointReadyScheduled = false;
     this.checkpointSequence = 0; this.checkpointWaiters = []; this.doneWaiters = []; this.doneSignaled = false;
   }
 
   static async open(inputFiles, revision, options = {}) {
+    if (sha256(inputFiles.source) !== revision.source_sha256) throw new Error("source hash does not match raster revision");
     const launchOptions = { headless: true };
     if (process.env.PHOTOPEA_CHROMIUM_EXECUTABLE_PATH) launchOptions.executablePath = process.env.PHOTOPEA_CHROMIUM_EXECUTABLE_PATH;
     const browser = await chromium.launch(launchOptions);
@@ -741,6 +783,11 @@ class PhotopeaLiveSession {
         if (labels.every((item) => this.roundTrip[item])) this.signalDone();
       } else {
         this.checkpoints[label] = decodePng(buffer);
+        this.checkpointBytes[label] = Buffer.from(buffer);
+        if (labels.every((item) => this.checkpoints[item]) && !this.checkpointPending && !this.checkpointReadyScheduled) {
+          this.checkpointReadyScheduled = true;
+          setTimeout(() => { this.checkpointReadyScheduled = false; this.markCheckpointReady(); }, 3000);
+        }
       }
     }
     this.maybeSignalCheckpoint();
@@ -784,7 +831,7 @@ class PhotopeaLiveSession {
     return new Promise((resolve, reject) => this.doneWaiters.push({ resolve, reject }));
   }
 
-  checkpointSummary(revision) {
+  checkpointSummary(revision, sessionId = null) {
     const labels = ["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"];
     if (labels.some((label) => !this.checkpoints[label])) throw new Error("Photopea checkpoint is incomplete");
     return {
@@ -793,14 +840,21 @@ class PhotopeaLiveSession {
       checkpoint_sha256: sha256(Buffer.concat(labels.map((label) => this.checkpoints[label].rgba))),
       mask_sha256: sha256(this.checkpoints.mask.rgba),
       artwork_sha256: sha256(this.checkpoints.artwork.rgba),
+      artifact_urls: sessionId ? Object.fromEntries(labels.map((label) => [label, `/v1/photopea/sessions/${sessionId}/checkpoints/${label}`])) : {},
     };
+  }
+
+  checkpointArtifact(label) {
+    const allowed = ["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"];
+    if (!allowed.includes(label) || !this.checkpointBytes[label]) throw new Error("checkpoint artifact is unavailable");
+    return this.checkpointBytes[label];
   }
 
   async applyRevision(mask, revision) {
     if (revision.source_sha256 !== this.currentRevision.source_sha256) throw new Error("revision source hash mismatch");
     if (revision.parent_revision_id !== this.currentRevision.revision_id) throw new Error("revision parent mismatch");
     const previous = this.checkpointSequence;
-    this.inputFiles.mask = mask; this.currentRevision = revision; this.checkpoints = {}; this.roundTrip = {};
+    this.inputFiles.mask = mask; this.currentRevision = revision; this.checkpoints = {}; this.checkpointBytes = {}; this.roundTrip = {}; this.checkpointReadyScheduled = false;
     const checkpoint = this.waitForCheckpoint(previous);
     const sourceToken = transfer(this.inputFiles.source);
     const maskToken = transfer(mask);
@@ -866,11 +920,12 @@ app.post("/v1/photopea/done/:id", (request, response) => {
 });
 
 function sessionResponse(sessionId, record) {
+  const checkpoint = record.live.checkpointSummary(record.revision, sessionId);
   return {
     session_id: sessionId,
     status: record.status,
     revision: record.revision,
-    checkpoint: record.checkpoint,
+    checkpoint,
     expires_at: record.expiresAt,
   };
 }
@@ -895,7 +950,7 @@ app.post("/v1/photopea/sessions", upload.fields([
     timer.unref(); record.timer = timer;
     photopeaSessions.set(sessionId, record);
     return response.status(201).json(sessionResponse(sessionId, record));
-  } catch (error) { return response.status(502).json({ code: "photopea_session_failed", message: String(error) }); }
+  } catch (error) { console.log(JSON.stringify({ event_type: "PhotopeaSessionOpenFailed", message: String(error), stack: error?.stack })); return response.status(502).json({ code: "photopea_session_failed", message: String(error) }); }
 });
 
 app.get("/v1/photopea/sessions/:id", (request, response) => {
@@ -903,6 +958,14 @@ app.get("/v1/photopea/sessions/:id", (request, response) => {
   const record = photopeaSessions.get(request.params.id);
   if (!record) return response.status(404).json({ code: "photopea_session_not_found" });
   return response.json(sessionResponse(request.params.id, record));
+});
+
+app.get("/v1/photopea/sessions/:id/checkpoints/:label", (request, response) => {
+  if (!authorized(request)) return response.status(401).end();
+  const record = photopeaSessions.get(request.params.id);
+  if (!record) return response.status(404).json({ code: "photopea_session_not_found" });
+  try { return response.type("image/png").send(record.live.checkpointArtifact(request.params.label)); }
+  catch (_error) { return response.status(404).json({ code: "checkpoint_artifact_not_found" }); }
 });
 
 app.post("/v1/photopea/sessions/:id/revisions", upload.single("mask"), async (request, response) => {

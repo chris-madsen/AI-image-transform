@@ -1,8 +1,8 @@
 # Printify Artwork Cleaner — Product Requirements Document
 
-**Status:** Draft for implementation; PSD and perimeter-mask acceptance criteria tightened
-**Version:** 1.1
-**Date:** 2026-10-03
+**Status:** Draft for correction; mask ownership and production review requirements clarified
+**Version:** 1.2
+**Date:** 2026-10-06
 **Product owner:** Zoya
 
 ## 1. Product summary
@@ -17,9 +17,12 @@ consider dark garments, partial alpha, DTG underbase behavior and the risk of
 white or colored fringes. It must support animals, people, plants, typography,
 vintage graphics, splashes, smoke, watercolor and mixed compositions.
 
-GPT interprets the user's natural-language intent. The local service executes a
-frozen structured policy. GPT is not called by the service and the service does
-not perform generative redraw.
+GPT interprets the user's natural-language intent and may review rendered
+checkpoints, but it is not the pixel-mask generator. Specialized segmentation
+and matting providers create non-authoritative proposals. Photopea authors the
+editable final raster layer mask inside the live document; deterministic code
+enforces protection, perimeter and print-safety invariants. The service does not
+perform generative redraw.
 
 ## 2. Goals
 
@@ -31,6 +34,11 @@ not perform generative redraw.
   never substitutes, redraws, or weakens preserved artwork.
 - Produce conservative and artistic variants with print previews.
 - Produce an editable PSD through the Photopea Live API.
+- Author the final editable raster mask inside the live Photopea document; a
+  caller-supplied `photopea_mask` MUST NOT be accepted as an authoritative job
+  input.
+- Use an implemented specialized segmentation/matting provider for automatic
+  proposals; a Protocol, LLM score or prose description is not an implementation.
 - Make every promised PSD layer contain the corresponding real pixel data and
   validate its Photopea rendering, not merely its name or PSD file signature.
 - Expose an asynchronous, authenticated, idempotent HTTP job contract.
@@ -49,19 +57,26 @@ not perform generative redraw.
 ## 4. Users and workflow
 
 1. A user submits artwork and describes what must remain and what may be removed.
-2. GPT converts the request into a validated `ProcessingPolicy`.
-3. The Skill submits source, manifest and policy to the local service.
+2. GPT converts the request into a validated intent-only `ProcessingPolicy`.
+3. The Skill submits source, manifest and policy to the local service. It does
+   not submit a finished `photopea_mask`.
 4. The service accepts a job and returns a polling URL.
-5. The pipeline freezes input, inspects artwork, composes masks and renders candidates.
-6. The service creates previews, validates candidates and requests PSD export from Photopea.
-7. The Skill downloads the immutable artifact bundle and reports `passed`,
+5. An implemented segmentation/matting provider creates one or more proposals,
+   protection maps and uncertainty/trimap evidence.
+6. The service opens one Photopea session. Photopea creates the editable working
+   mask and returns reviewable artwork, mask and garment-preview artifacts.
+7. The production vision loop inspects those exact artifacts and either accepts
+   the checkpoint or submits a bounded typed correction to the same document.
+8. The accepted Photopea revision exports both final PNG and PSD, which are then
+   reopened/validated against the accepted checkpoint.
+9. The Skill downloads the immutable artifact bundle and reports `passed`,
    `review_required`, `refused` or `failed` honestly.
 
-The policy contains a per-artwork `mask_tuning` decision selected by the
-vision/agent boundary. It is recalculated for every source or mask revision;
-repository defaults are only compatibility values and can never authorize a
-passed job. The agent inspects emitted candidate previews before accepting or
-submitting the next revision.
+Per-artwork `mask_tuning` and `visual_quality` are runtime evidence selected
+from the frozen source and exact checkpoint artifacts. They are recalculated for
+every source or mask revision; repository defaults and caller-authored scores
+can never authorize a passed job. The production reviewer inspects emitted
+candidate previews before accepting or submitting the next revision.
 
 ## 5. Structured policy
 
@@ -73,54 +88,23 @@ submitting the next revision.
   "remove_only": ["external flat background and confirmed edge debris"],
   "target_garments": ["black", "navy", "blue_jean", "white"],
   "edge_strategy": "auto_print_safe",
-  "requested_variants": ["conservative", "artistic"],
-  "mask_tuning": {
-    "decision_id": "vision-review-source-hash-r1",
-    "source_sha256": "<64-hex-source-hash>",
-    "background_tolerance": 8,
-    "fade_low_distance": 4,
-    "fade_full_distance": 64,
-    "fade_band_radius": 4,
-    "confidence": 0.91
-  },
-  "visual_quality": {
-    "reference_id": "named-golden-or-review-rubric",
-    "source_sha256": "<64-hex-source-hash>",
-    "checkpoint_sha256": "<64-hex-checkpoint-hash>",
-    "overall_score": 0.0,
-    "subject_integrity": 0.0,
-    "intentional_detail_score": 0.0,
-    "edge_naturalness": 0.0,
-    "artifact_free_score": 0.0,
-    "confidence": 0.0,
-    "reviewer_notes": []
-  },
-  "photopea_mask_revision": {
-    "revision_id": "mask-source-hash-r1",
-    "parent_revision_id": null,
-    "source_sha256": "<64-hex-source-hash>",
-    "checkpoint_sha256": "<64-hex-checkpoint-hash>",
-    "base_mask_sha256": "<64-hex-base-mask-hash>",
-    "result_mask_sha256": "<64-hex-result-mask-hash>",
-    "operation": "replace_mask",
-    "confidence": 0.92
-  }
+  "requested_variants": ["controlled_soft_alpha", "halftone"]
 }
 ```
 
 The policy is frozen at ingestion. Invalid or ambiguous policy MUST produce
 `review_required`; the service MUST NOT invent a fallback interpretation.
-The visual-quality fields are supplied by GPT/vision at the agent boundary;
-the service does not hallucinate them. Missing assessment, low confidence or a
-low score is a review decision, not permission to export a finished print.
-`photopea_mask_revision` is a frozen, per-artwork vision decision bound to one
-grayscale/alpha mask carrier upload. It is not JavaScript and it is not a
-polygon approximation. `source_sha256`, `checkpoint_sha256`,
-`base_mask_sha256` and `result_mask_sha256` are mandatory provenance bindings;
-stale or cross-artwork revisions are rejected. Each checkpoint correction
-creates a new `revision_id` and `parent_revision_id`. If the revision or mask
-carrier is missing or ambiguous, the PSD stage must fail closed or remain
-`review_required`.
+`mask_tuning`, `visual_quality` and revision hashes are runtime evidence, not
+caller-authored acceptance claims. They are created from the frozen source and
+the exact checkpoint under review. Missing assessment, low confidence or a low
+score is a review decision, not permission to export a finished print.
+`photopea_mask_revision` is deliberately absent from the public job policy. It
+is an internal runtime value created only after Photopea has emitted a concrete,
+reviewable checkpoint. Internal revisions bind `source_sha256`,
+`checkpoint_sha256`, `base_mask_sha256` and `result_mask_sha256`; stale or
+cross-artwork corrections are rejected. Mask bytes may cross the service ↔
+Photopea bridge as internal proposal/correction transport, but a client upload
+MUST NOT be promoted directly to the authoritative final alpha.
 
 ## 6. Bounded contexts
 
@@ -158,6 +142,20 @@ or use a semantic label as a substitute for a pixel mask. When an intact
 reference and a perimeter-clean candidate are provided, protected pixels from
 the intact reference win over removal pixels from the candidate.
 
+Automatic proposal generation MUST use a declared implementation, not the
+`VisionProvider` interface alone. The initial supported stack is:
+
+- BiRefNet HR-matting as the primary high-resolution alpha proposal;
+- BEN2 as an independent second proposal or fallback candidate;
+- SAM 2.1 for semantic protection/ROI prompts, never as final soft alpha;
+- ViTMatte for trimap-guided boundary refinement when proposal disagreement
+  defines an uncertainty band.
+
+Equivalent models may be substituted only with explicit licensing, model
+version, weights hash, input/output contract and golden-fixture evidence. The
+LLM may select modes, express semantic intent and judge previews; it MUST NOT
+paint or serialize the production alpha mask.
+
 ### Print-safe Rendering
 
 Creates binary-alpha, controlled-soft-alpha, halftone, conservative and
@@ -182,11 +180,13 @@ with `app.activeDocument.saveToOE("psd:true")`.
 
 The adapter constructs one editable document. It is not sufficient to open
 separate documents, rename them, or create empty placeholder layers.
-The intended session is `source + raster mask carrier → Photopea checkpoint →
-vision review → hash-bound raster correction → checkpoint` within the same
-document. Polygon plans and arbitrary scripts are rejected. The bridge must
-reject script/runtime errors promptly; it must never silently fall back to
-importing seven generated PNG documents.
+The intended session is `source + internal model proposals/protection evidence
+→ Photopea-authored working mask → checkpoint artifacts → production vision
+review → hash-bound raster correction → checkpoint` within the same document.
+The public job API never accepts an authoritative final-mask carrier. Polygon
+plans and arbitrary client scripts are rejected. The bridge must reject
+script/runtime errors promptly; it must never silently fall back to importing
+seven generated PNG documents.
 
 The bridge exposes this as an explicit bounded session protocol:
 
@@ -196,9 +196,13 @@ POST /v1/photopea/sessions/{session_id}/revisions
 POST /v1/photopea/sessions/{session_id}/finalize
 ```
 
-The Skill/vision adapter owns the review decision and submits only the next
-grayscale/alpha mask carrier plus a typed revision. The same browser and
-Photopea document remain alive until finalization or the five-minute expiry.
+The service runtime owns orchestration of the production review loop. A concrete
+vision adapter receives retrievable bytes or authenticated URLs for the exact
+transparent artwork, grayscale mask, black, navy and blue-jean checkpoint
+renders. Hashes alone are provenance and are not visual input. The adapter may
+return a typed correction whose pixels are transported internally to Photopea.
+The same browser and Photopea document remain alive until finalization or the
+configured expiry.
 The final transparent artwork, previews and PSD are emitted from the accepted
 revision; a stale source, checkpoint or parent revision is rejected.
 
@@ -208,12 +212,14 @@ revision; a stale source, checkpoint or parent revision is rejected.
 Ingest
 → freeze source and policy
 → inspect artwork
-→ build protected mask
-→ compose candidate mask
-→ render conservative/artistic variants
-→ generate print previews
-→ validate
-→ export PNG/mask/PSD/report
+→ run specialized segmentation/matting proposals
+→ build protected mask and uncertainty trimap
+→ open one Photopea document
+→ author editable working mask in Photopea
+→ emit retrievable checkpoint artifacts
+→ production vision accept/correct loop
+→ export final PNG and PSD from accepted revision
+→ reopen, validate and package report
 → complete job
 ```
 
@@ -241,7 +247,8 @@ GET  /v1/artifacts/{job_id}/{artifact_name}
 ```
 
 `POST /v1/jobs` accepts multipart source image, JSON manifest, structured policy
-and optional idempotency/correlation keys. The response is:
+and optional idempotency/correlation keys. It MUST reject `photopea_mask` and
+any equivalent caller-supplied authoritative final-mask field. The response is:
 
 ```json
 {
@@ -262,6 +269,8 @@ The bundle includes:
 artwork_conservative.png
 artwork_artistic.png
 mask_conservative.png
+artwork_final.png
+mask_final.png
 alpha_mask.png
 preview_black.png
 preview_white.png
@@ -272,6 +281,11 @@ preview_dtg_underbase.png
 artwork_editable.psd
 report.json
 ```
+
+`artwork_conservative.png`, `artwork_artistic.png` and their masks are preflight
+proposals and diagnostics. `artwork_final.png` and `mask_final.png` MUST be
+exported from the same accepted Photopea revision as `artwork_editable.psd`.
+Proposal artifacts MUST NOT be presented as authoritative final output.
 
 The PSD MUST be generated by the Photopea Live API, not by a Python PSD library.
 Without the Photopea adapter the job cannot be `passed`. It MUST be one
@@ -327,6 +341,9 @@ The MVP is accepted when:
 
 - OpenSpec proposal, specs, design and tasks validate.
 - The Skill creates and submits structured policy.
+- The public API rejects caller-supplied authoritative `photopea_mask` data.
+- At least one pinned specialized segmentation/matting provider is implemented;
+  its model version, license and weights hash are recorded.
 - The service accepts asynchronous jobs and supports polling/idempotency.
 - Inspection, mask composition, rendering, previews and validation work.
 - PNG, masks, previews, PSD and JSON report are produced when Photopea is available.
@@ -341,11 +358,14 @@ The MVP is accepted when:
 - The product has no mandatory Printify, MCP, Etsy or ChatGPT runtime dependency.
 - Photopea can open the produced PSD, toggle real garment previews, inspect the
   working mask, and continue manual editing without reconstructing layers.
+- The production runtime executes at least one real checkpoint review with exact
+  artwork/mask/garment images and cannot finalize from hashes alone.
+- Final PNG, final mask and PSD come from the same accepted Photopea revision.
 
 ## 13. Semantic mask contract
 
-The Skill or an approved vision provider MUST provide pixel-level artifacts
-when semantic intent is present:
+The internal specialized model boundary MUST resolve semantic intent into
+pixel-level artifacts before Photopea authoring:
 
 ```text
 semantic_protection_mask.png
@@ -355,7 +375,9 @@ manual_corrections.png
 ```
 
 The words `eyes`, `text`, `ears` or `leaves` are not pixel protection by
-themselves. Missing semantic masks produce `review_required`.
+themselves. The caller does not provide a finished mask; configured model
+providers generate proposals/protection, and missing or weak model evidence
+produces `review_required`.
 
 ## 14. Stage status contract
 

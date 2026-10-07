@@ -40,7 +40,7 @@ def test_policy_freezes_visual_quality_assessment() -> None:
             "artifact_free_score": 0.92,
             "confidence": 0.9,
         }
-    })
+    }, allow_runtime_evidence=True)
     assert not isinstance(result, Err)
     assert result.value.visual_quality is not None
     assert result.value.visual_quality.reference_id == "panther-v1"
@@ -58,7 +58,7 @@ def test_policy_freezes_per_artwork_mask_tuning() -> None:
             "fade_band_radius": 6,
             "confidence": 0.87,
         },
-    })
+    }, allow_runtime_evidence=True)
     assert not isinstance(result, Err)
     assert result.value.mask_tuning is not None
     assert result.value.effective_background_tolerance == 11
@@ -69,23 +69,10 @@ def test_policy_rejects_invalid_mask_tuning() -> None:
     assert isinstance(result, Err)
 
 
-def test_policy_freezes_raster_mask_revision() -> None:
-    result = freeze_policy({
-        "photopea_mask_revision": {
-            "revision_id": "vision-r1",
-            "parent_revision_id": None,
-            "source_sha256": "a" * 64,
-            "checkpoint_sha256": "b" * 64,
-            "base_mask_sha256": "c" * 64,
-            "result_mask_sha256": "d" * 64,
-            "operation": "replace_mask",
-            "confidence": 0.91,
-        },
-    })
-    assert not isinstance(result, Err)
-    assert result.value.photopea_mask_revision is not None
-    assert result.value.photopea_mask_revision.revision_id == "vision-r1"
-    assert result.value.photopea_mask_revision.result_mask_sha256 == "d" * 64
+def test_public_policy_rejects_photopea_revision_evidence() -> None:
+    result = freeze_policy({"photopea_mask_revision": {"revision_id": "vision-r1"}})
+    assert isinstance(result, Err)
+    assert result.error.code == "forbidden"
 
 
 def test_policy_rejects_legacy_polygon_photopea_plan() -> None:

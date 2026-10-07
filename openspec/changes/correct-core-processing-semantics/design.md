@@ -37,8 +37,10 @@ editable Solid Color Fill layers are created in Photopea and saved through
 The Skill/vision adapter owns a bounded review loop. After each Photopea
 checkpoint it requests a vision assessment of the rendered artwork and mask
 preview. The assessment returns a hash-bound `RasterMaskRevision` plus a mask
-carrier, never arbitrary JavaScript. The bridge applies that revision to the
-same Photopea document and emits the next checkpoint. The loop is capped by
+carrier, never arbitrary JavaScript. The bridge applies that revision in the
+same live browser session and emits the next checkpoint; the current runtime
+rebuilds the editable document from the original source and carrier rather
+than mutating the previously masked document in place. The loop is capped by
 revision count and wall-clock budget; missing, stale or weak vision evidence
 remains `review_required`.
 
