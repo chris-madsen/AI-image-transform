@@ -1,32 +1,41 @@
 # Requirement Evidence Matrix
 
-This matrix records implementation evidence without treating a valid PSD signature
-as proof of editable structure.
+This matrix records implementation evidence without treating a valid PSD
+signature or a deterministic fixture as proof of production visual quality.
 
 | Requirement area | Evidence | Status |
 |---|---|---|
-| Frozen policy and explicit semantic-mask boundary | `src/printify_artwork_cleaner/domain/models.py`, `tests/test_validation_and_psd.py::test_semantic_text_without_pixel_mask_is_not_passed` | Verified |
-| Edge-connected external-perimeter cleanup | `src/printify_artwork_cleaner/domain/image_math.py`, `tests/test_cleaner_domain.py::test_edge_connected_background_does_not_remove_internal_same_color` | Verified |
-| Intact-reference precedence | `ResolvedMaskBundle.protected_reference`, `tests/test_validation_and_psd.py::test_intact_reference_wins_and_reports_zero_protected_diffs` | Verified |
-| Protected alpha/RGB diff evidence | `ValidationResult.protected_alpha_loss_pixels`, `protected_rgb_diff_pixels` | Verified |
-| Unauthorized alpha-removal detection | `ValidationResult.unauthorized_alpha_removal_pixels`, corresponding validation regression test | Verified |
-| Approved manual-perimeter golden fixture | `tests/fixtures/manual_perimeter/`, `tests/test_golden_cleaner.py::test_manual_perimeter_fixture_matches_approved_alpha_and_preserves_details` | Verified |
-| Beauty-aware visual quality gate | `VisualQualityAssessment`, deterministic fragmentation guard, `test_missing_visual_quality_assessment_is_review_required`, low-score override test | Verified |
-| Real specialized model smoke | Deployment-only BiRefNet/BEN2 HTTP adapters with independent model metadata and weights hashes; the consensus candidate was visually inspected and rejected by the Panther golden validator because of halo, missing perimeter detail, and lower-fade mismatch | Partial: evidence is real, but production promotion remains blocked |
-| Protected eyes/text/vegetation/internal hole | Manual-perimeter fixture and golden test | Verified |
-| Dark-garment preview distinction | `test_manual_perimeter_fixture_has_distinct_dark_garment_preview`, DTG tests | Verified |
-| Public mask ownership boundary | `service.py`, `submit_artwork_job.py`, `tests/test_service_contract.py::test_public_job_rejects_authoritative_photopea_mask`, public `freeze_policy` rejection | Verified: caller-supplied final Photopea masks are rejected |
-| Specialized proposal adapter boundary | `adapters/model_proposals.py`, `tests/test_model_proposals.py` | Partial: pinned BiRefNet/BEN2 HTTP adapters, per-artwork tuning/quality evidence and consensus are implemented; deployment endpoints and real weights still must be configured |
-| Missing specialized proposal is fail-closed | `service.py`, `tests/test_service_contract.py::test_async_job_contract_and_artifacts` | Verified: an unconfigured provider adds `model_proposal` review evidence and cannot produce a passed job |
-| Full-resolution Panther golden acceptance | `tests/fixtures/panther_golden/`, `domain/golden_acceptance.py`, `tests/test_panther_golden_acceptance.py`, `scripts/validate_panther_golden.py` | Verified: approved RESTORED render extracted from the owner PSD; ears, eyes, whiskers, head foliage, lower fade and external-edge mutations are rejected |
-| Independent model pins | `docs/deployment/model-stack.md`, `adapters/model_proposals.py`, `tests/test_model_proposals.py` | Partial: independent BiRefNet/BEN2 metadata pins are enforced; actual model endpoints, SAM 2.1/ViTMatte adapters and weights remain deployment work |
-| Retrievable Photopea checkpoint artifacts | `bridge/server.mjs`, `adapters/photopea.py`, `artifacts/photopea-full-smoke-current-20261006/job-evidence.json` | Verified: authenticated checkpoint URLs were returned and downloaded in the full job-level smoke |
-| Production checkpoint review loop | `service.py::_review_photopea_session`, `adapters/vision_review.py`, `tests/test_vision_review.py`, `artifacts/photopea-full-smoke-current-20261006/correction-job-evidence.json` | Partial: typed HTTP reviewer adapter, live acceptance/correction path and hash-bound revision are verified; a deployed external reviewer endpoint remains deployment work |
-| Async job, authentication, idempotency and path safety | `tests/test_service_contract.py` and full suite | Verified |
-| Real Photopea source + raster-carrier transfer | `bridge/server.mjs`, one source + one correction-mask carrier per revision, tokenized ArrayBuffer endpoints, no polygon or seven-PNG primary path; `artifacts/photopea-full-smoke-current-20261006/job-evidence.json` | Verified for 8×8 revision and full-resolution job-level smoke |
-| Linked Photopea raster mask | Canonical charID transparency-selection sequence and linked mask creation in the bridge; revision mask SHA changes and full job evidence | Verified for 8×8 initial+revision and full-resolution initial job |
-| Real editable garment-fill layers | Solid Color Fill content-layer Action Manager path for black/navy/blue-jean; revision previews are independently exported and reopened | Verified for 8×8 initial+revision and full-resolution initial job |
-| PSD reopen/structure validation | `decodePng`, source+mask render comparison, exact checkpoint↔reopen pixel comparison and `artifacts/photopea-full-smoke-current-20261006/job-evidence.json` | Verified for 8×8 initial+revision and full-resolution job-level smoke |
-| PSD visual/mask equivalence validation | `decodePng`, source+mask render comparison, exact checkpoint↔reopen pixel comparison and full-resolution evidence | Verified for 8×8 initial+revision and full-resolution job-level smoke |
-| Full-resolution Photopea session/export proof | `artifacts/photopea-full-smoke-current-20261006/evidence.json`, `job-evidence.json` | Verified: 4500×5400 session, checkpoint in 75.4 s, final PSD in 194.57 s, full job in 265.81 s, reopened pixel evidence and 8BPS PSD |
-| Full-resolution job-level Photopea proof | `artifacts/photopea-full-smoke-current-20261006/job-evidence.json`, command recorded in the artifact | Verified: async POST → poll completed with `passed` and `psd_export_status=verified` in 265.81 s |
+| Frozen policy and semantic-mask boundary | `domain/models.py`, `test_validation_and_psd.py::test_semantic_text_without_pixel_mask_is_not_passed` | Verified |
+| Edge-connected external-perimeter cleanup | `domain/image_math.py`, `test_cleaner_domain.py::test_edge_connected_background_does_not_remove_internal_same_color` | Verified |
+| Intact-reference precedence and protected RGB/alpha diffs | `ResolvedMaskBundle.protected_reference`, `ValidationResult` protected diff fields, validation regression tests | Verified |
+| Unauthorized alpha-removal detection | `ValidationResult.unauthorized_alpha_removal_pixels`, validation regression test | Verified |
+| Approved manual-perimeter fixture | `tests/fixtures/manual_perimeter/`, `test_golden_cleaner.py` | Verified |
+| Owner-approved Panther golden comparator | `domain/golden_acceptance.py`, `tests/test_panther_golden_acceptance.py`, `scripts/validate_panther_golden.py` | Verified as a gate; the current deterministic proposal candidate fails it and remains unpromoted |
+| Beauty-aware visual-quality gate | `VisualQualityAssessment`, protected-region checks, deterministic fragmentation/edge metrics, missing-evidence tests | Partial: external reviewer pixels are wired, but automatic model acceptance still requires deployment |
+| Edge/fringe safety metrics | `domain/visual_quality.py`, `domain/validation.py`, report fields for chroma contamination, contour distance and dark-garment halo | Verified as deterministic safety signals; not a semantic substitute for the golden/reviewer gate |
+| Real specialized model adapters | `adapters/model_proposals.py`, `scripts/serve_model_proposals.py`, `scripts/serve_sam2_protection.py`, model-stack tests | Partial: pinned BiRefNet/BEN2/SAM2 adapters are implemented, but deployment weights and Panther promotion remain external gates |
+| Public mask ownership boundary | `service.py`, Skill helper, `test_service_contract.py::test_public_job_rejects_authoritative_photopea_mask` | Verified: caller-supplied final Photopea masks and runtime quality claims are rejected |
+| Missing specialized proposal is fail-closed | `service.py`, async contract test | Verified: unconfigured proposal provider cannot produce a passed job |
+| Retrievable Photopea checkpoint pixels | `bridge/server.mjs`, `adapters/photopea.py`, `adapters/vision_review.py` | Verified in the current real smoke: authenticated source/artwork/mask/overlay and garment previews were downloaded; PSD binaries remain outside Git |
+| Production checkpoint review loop | `service.py::_review_photopea_session`, typed HTTP reviewer, bridge session API | Partial: real session/review/finalize wiring passed with a deterministic acceptance fixture; deployed reviewer credentials and model remain required |
+| HMAC-bound finalization | `review_acceptance_token`, bridge `validAcceptanceToken`, bridge contract tests | Verified: missing, stale or mismatched acceptance cannot finalize a checkpoint |
+| One-document Photopea authoring | `bridge/server.mjs`, `test_bridge_contract.py` | Verified: one source document remains alive; initial transfer uses accepted and gaps carriers, revision transfer uses one correction carrier and no polygon/script input |
+| Linked Photopea raster masks and editable fills | Photopea Action Manager scripts, reopened evidence layer list | Verified in current 4500×5400 smoke |
+| PSD reopen/pixel validation | `decodePng`, exact checkpoint↔reopen pixel comparison, current smoke evidence | Verified: reopened artwork/mask/garment pixels and required layers were checked |
+| Final PNG/PSD provenance | `service.py::_run_deferred_psd`, authoritative `artifact_set`, report contract tests | Verified: final PNGs, masks, previews and PSD are published from one accepted Photopea revision; core outputs remain proposals |
+| Source hash at bridge boundary | `PhotopeaLiveSession.open`, `test_bridge_contract.py` and current session smoke | Verified: raw source bytes are hashed before Photopea launch and compared with the revision source hash |
+| Full-resolution Photopea contract smoke | Fresh 2026-10-07 run with `PHOTOPEA_REVIEW_SECRET`: 4500×5400, 290.60 s, `passed`, verified PSD, reopened pixels and required layers | Verified for technical contract only; the deterministic proposal failed the owner Panther golden and is not production-approved |
+| Five-minute budget | `PHOTOPEA_REVIEW_BUDGET_SECONDS`, bounded session/client timeouts, current smoke | Partial: current run completed within 300 s, but deployment model/reviewer latency must be benchmarked before SLA promotion |
+| Async job/auth/idempotency/path safety | `tests/test_service_contract.py` and full suite | Verified |
+
+The current full-resolution smoke command is intentionally recorded as an
+external run rather than committed binary output:
+
+```bash
+PHOTOPEA_REVIEW_SECRET='injected-at-runtime' \
+  .venv/bin/python /tmp/service_photopea_full_smoke_persistent.py
+```
+
+The PSD and generated PNGs must stay outside Git. The owner-approved Panther
+golden gate remains unchecked for the current model fixture until a real local
+specialized model and a real visual reviewer produce a passing candidate.

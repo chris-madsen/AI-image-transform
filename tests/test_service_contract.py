@@ -108,6 +108,20 @@ def test_public_job_rejects_authoritative_photopea_mask(tmp_path: Path) -> None:
     assert response.json()["detail"]["code"] == "forbidden_final_mask_input"
 
 
+def test_public_job_rejects_client_visual_quality_evidence(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path, psd_exporter=FakePhotopeaExporter()))
+    response = client.post(
+        "/v1/jobs",
+        files={"source": ("art.png", _source(), "image/png")},
+        data={
+            "policy_json": json.dumps({"visual_quality": {"overall_score": 1.0}}),
+            "manifest_json": "{}",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "forbidden"
+
+
 def test_artifact_paths_reject_traversal(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path, psd_exporter=FakePhotopeaExporter()))
     assert client.get("/v1/jobs/../secrets").status_code in {400, 404}

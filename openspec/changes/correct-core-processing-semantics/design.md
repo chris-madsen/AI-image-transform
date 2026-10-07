@@ -26,7 +26,8 @@ is calculated against the frozen source/reference for every candidate.
 ### One Photopea document and iterative mask session
 
 Photopea is the source of truth for mask authoring. The bridge opens the source
-once, transfers one grayscale/alpha mask carrier through ArrayBuffer messaging,
+once, transfers accepted/restored and conservative/gaps grayscale mask carriers
+through ArrayBuffer messaging,
 and uses the carrier transparency with the canonical charID Action Manager
 sequence to create linked raster masks. It does not approximate fur, whiskers,
 smoke or typography with polygons and does not import seven Python-generated
@@ -39,8 +40,8 @@ checkpoint it requests a vision assessment of the rendered artwork and mask
 preview. The assessment returns a hash-bound `RasterMaskRevision` plus a mask
 carrier, never arbitrary JavaScript. The bridge applies that revision in the
 same live browser session and emits the next checkpoint; the current runtime
-rebuilds the editable document from the original source and carrier rather
-than mutating the previously masked document in place. The loop is capped by
+keeps the same Photopea document alive while applying the correction carrier.
+The loop is capped by
 revision count and wall-clock budget; missing, stale or weak vision evidence
 remains `review_required`.
 

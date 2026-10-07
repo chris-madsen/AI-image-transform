@@ -28,7 +28,7 @@
 ## 5. Async service shell
 
 - [x] 5.1 Implement FastAPI/uvicorn endpoints for job submission, status, artifact listing/download and health; verify OpenAPI routes and HTTP error contracts.
-- [x] 5.2 Implement async executor orchestration including mandatory Photopea pixel evidence, same-revision protected-pixel evidence and explicit bridge-unavailable states; verify POST → poll → PNG/mask/PSD artifacts with a real Photopea export. Full-resolution job evidence completed in 265.81 seconds.
+- [x] 5.2 Implement async executor orchestration including mandatory Photopea pixel evidence, same-revision protected-pixel evidence and explicit bridge-unavailable states; verify POST → poll → PNG/mask/PSD artifacts with a real Photopea export. Fresh full-resolution job evidence completed in 290.60 seconds; the deterministic proposal remains a failed owner-golden candidate.
 - [x] 5.3 Add bearer authentication, request limits, correlation/job identifiers, JSON logs and Prometheus RED/domain metrics without high-cardinality labels; verify redaction and `/metrics` smoke tests.
 
 ## 6. Skill and deployment adapters
@@ -41,7 +41,7 @@
 ## 7. Verification and completion
 
 - [x] 7.1 Add deterministic contract golden fixtures for animal/text/splashes, vegetation, light internal details, typography, smoke, baked checkerboard, boundary-touching and ambiguous cases; verify zero protected-pixel loss and expected status per fixture. The owner-approved Panther reference remains the separate production-quality golden.
-- [x] 7.2 Add a manual-perimeter reference fixture; verify the generated alpha, navy/blue-jean preview and PSD layer mask match the approved reference within declared tolerances. The full-resolution Panther owner-approved render and alpha are checked by `tests/test_panther_golden_acceptance.py`; PSD structure is recorded in its manifest and independently verified by the Photopea round-trip evidence.
+- [x] 7.2 Add a manual-perimeter reference fixture and a strict candidate comparator. The owner-approved Panther render and alpha are checked by `tests/test_panther_golden_acceptance.py`; the current deterministic proposal is intentionally rejected by that comparator, while PSD structure is independently verified by Photopea round-trip evidence.
 - [x] 7.3 Run full deterministic, Photopea round-trip and HTTP integration suites; verify `pytest`, both strict OpenSpec validations and the local POST → poll flow pass.
 - [x] 7.4 Re-read all OpenSpec and DDD context files, mark only evidenced tasks complete and produce a requirement-to-test-to-artifact summary; verify no formal PSD-only success remains.
 - [x] 7.5 Implement at least one pinned specialized matting provider and a second independent proposal path; record model/version/license/weights hashes and run the Panther acceptance fixture. BiRefNet/BEN2 and the SAM2 protection adapter are implemented and pinned evidence is recorded; the candidate failed Panther acceptance and remains unpromoted.

@@ -51,13 +51,15 @@ status; a slow browser MUST NOT block the core processing response.
 ### Requirement: Photopea-authored raster mask session
 The bridge MUST open the source artwork once and create the working selection,
 raster masks and editable layers inside that Photopea document. It MUST accept
-only one grayscale/alpha mask carrier plus a validated `RasterMaskRevision`.
+the initial request with accepted/restored and conservative/gaps grayscale
+mask carriers plus a validated `RasterMaskRevision`; revisions carry one
+correction carrier.
 It MUST reject polygon plans, arbitrary JavaScript and seven pre-rendered PNG
 documents for the PSD path.
 
 #### Scenario: initial mask revision
-- **WHEN** the Skill submits one source, one raster mask carrier and a
-  hash-bound revision
+- **WHEN** the Skill submits one source, accepted/restored and conservative/gaps
+  raster mask carriers, and a hash-bound initial revision
 - **THEN** Photopea creates `RESTORED`, `WITH GAPS` and `WORKING MASK` from the
   source layer and returns artwork, mask and garment checkpoint previews
 

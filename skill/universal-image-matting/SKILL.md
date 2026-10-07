@@ -115,8 +115,9 @@ the policy JSON.
   writer. The bridge is not controlled by mouse-coordinate automation. The
   bridge has a bounded hard timeout; a slow export or script error is an
   explicit failed PSD stage, never an indefinitely running job. The bridge
-  must receive one source document plus one grayscale/alpha mask carrier and
-  its typed raster revision; it must not receive seven pre-rendered PNG
+  must receive one source document plus accepted/restored and conservative/gaps
+  grayscale/alpha mask carriers and its typed raster revision; revisions carry
+  one correction mask. It must not receive seven pre-rendered PNG
   documents or a polygon plan as the primary workflow.
 
 ## Repository implementation

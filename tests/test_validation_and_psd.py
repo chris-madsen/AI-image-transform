@@ -22,6 +22,22 @@ def test_partial_alpha_halo_is_not_passed() -> None:
     result = validate_candidate(candidate, source, inspection, policy, protected_mask(policy, source.shape[:2]))
     assert result.status in {JobStatus.REVIEW_REQUIRED, JobStatus.REFUSED}
     assert "halo" in result.review_regions
+    assert result.dark_garment_halo_score > 0
+
+
+def test_broad_colored_fringe_is_reported_as_edge_contamination() -> None:
+    source = np.zeros((12, 12, 4), dtype=np.uint8)
+    source[..., :3] = [40, 90, 140]
+    source[..., 3] = 255
+    candidate = source.copy()
+    candidate[..., 3] = 0
+    candidate[2:10, 2:10, 3] = 255
+    candidate[1:11, 1:11, 3] = 64
+    inspection, _ = inspect_rgba(source, ProcessingPolicy())
+    result = validate_candidate(candidate, source, inspection, ProcessingPolicy(), np.zeros((12, 12), dtype=bool))
+    assert result.edge_chroma_contamination > 0.35
+    assert "edge_chroma" in result.review_regions
+    assert "dark_garment_halo" in result.review_regions
 
 
 def test_photopea_exporter_contract_is_binary_psd() -> None:

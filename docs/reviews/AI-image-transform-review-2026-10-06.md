@@ -7,9 +7,9 @@
 ## Verified corrections
 
 - `photopea_mask` and `photopea_mask_revision` are not public job inputs.
-- Photopea receives one source ArrayBuffer and one internal grayscale mask/correction carrier. The primary path no longer imports seven full-size PNG documents, polygon plans, or arbitrary scripts.
+- Photopea receives one source ArrayBuffer plus two internal initial grayscale carriers (accepted/restored and conservative/gaps); revisions receive one correction carrier. The primary path no longer imports seven full-size PNG documents, polygon plans, or arbitrary scripts.
 - The Photopea bridge authors the working mask, linked raster masks, source backup, restored/gap layers, and independently toggleable black/navy/blue-jean fills.
-- The service keeps one outer Photopea browser session through the bounded review loop. The current runtime rebuilds the editable document from the frozen source plus the accepted correction carrier on each revision; this is documented honestly and is not claimed to be literal same-document mutation.
+- The service keeps one outer Photopea browser session and one Photopea document through the bounded review loop. Revisions add a new accepted raster-mask layer inside that document and preserve the source, gap layer and editable fill layers until finalization.
 - Checkpoint artwork, mask, and dark-garment previews are returned as authenticated retrievable artifacts, not hashes alone.
 - Reviewer decisions and corrections are typed and bound to source, checkpoint, parent revision, base-mask, and result-mask hashes. Stale revisions, wrong dimensions, arbitrary scripts, and polygon plans are rejected.
 - Missing model proposals, missing visual-quality evidence, missing reviewer decisions, and missing Photopea conformance evidence fail closed to `review_required`.
@@ -43,13 +43,15 @@ git diff --check                            passed
 openspec validate ... --strict              passed for both active changes
 ```
 
-The full-resolution job evidence remains in the ignored
-`artifacts/photopea-full-smoke-current-20261006/` directory:
+The previous full-resolution job evidence remains in the ignored
+`artifacts/photopea-full-smoke-current-20261006/` directory and predates the
+current HMAC finalization contract. It must not be used as proof for the
+current bridge without rerunning the command below.
 
 - Panther 4500×5400;
 - async POST → poll → core artifacts → Photopea checkpoint → reviewer accept → PSD finalize → reopen;
-- `passed` with verified PSD;
-- elapsed time: 265.81 seconds;
+- `passed` with verified PSD under the old contract;
+- elapsed time: 265.81 seconds (historical);
 - required editable layers and exact checkpoint/reopen pixel evidence recorded;
 - PSD remains outside Git.
 
@@ -155,3 +157,33 @@ matting for arbitrary artwork.
   hidden or downgraded.
 - Verification: `77 passed`, `compileall`, `node --check bridge/server.mjs`,
   both OpenSpec strict validations and `git diff --check` passed.
+
+## Follow-up verification on 2026-10-07 (current review correction)
+
+- Rejected the public one-shot Photopea export path. PSD finalization now uses
+  only the reviewed session endpoint and requires an HMAC acceptance token bound
+  to source hash, revision id and the current checkpoint hash.
+- Initial sessions now transfer source plus separate accepted/restored and
+  conservative/gaps carriers. Revision transfer sends only a correction mask;
+  the source document is not resent or closed between revisions.
+- Checkpoints expose authenticated source, artwork, mask and red-contour
+  overlay bytes to the reviewer. The reviewer adapter now requires all of
+  those pixels plus black, navy and blue-jean previews.
+- Added deterministic edge-band chroma, contour-distance and dark-garment
+  partial-alpha metrics to the validation report. These metrics are safety
+  signals; the owner-approved Panther golden remains the authoritative visual
+  comparator.
+- Fixed final PSD visibility restoration. Before `saveToOE("psd:true")`, the
+  bridge explicitly makes the accepted `RESTORED*` layer visible; round-trip
+  preview scripts can no longer leave the saved document visually empty.
+- A fresh real 4500×5400 POST→poll→Photopea→review→HMAC-finalize smoke passed
+  in 290.60 seconds with reopened pixel evidence and the required editable
+  layers. The authoritative checkpoint PNG was visually inspected and contains
+  the subject, ears, eyes, whiskers and foliage. The owner-approved Panther
+  golden comparison of this deterministic proposal fixture failed (external
+  edge loss 26714 pixels; lower-fade MAE 40.14), so specialized-model
+  promotion remains blocked and this candidate must not be represented as the
+  approved Panther result.
+- The smoke PSD is intentionally not committed. The authoritative PNGs,
+  masks, previews and PSD are produced by the same accepted Photopea revision;
+  the owner golden gate still requires a real deployed model/reviewer result.

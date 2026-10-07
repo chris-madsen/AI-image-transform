@@ -2,18 +2,18 @@
 
 This service is the only PSD writer in the project. It does not construct PSD
 bytes in Python. It opens Photopea in a browser outer environment, passes the
-frozen source image, one grayscale/alpha mask carrier and a validated hash-bound
+frozen source image, internal grayscale/alpha mask carriers and a validated hash-bound
 raster mask revision through the Live Messaging
 API, then returns the binary result of
 `app.activeDocument.saveToOE("psd:true")`.
 
-The workflow is one Photopea document: the source is opened once, the raster
-carrier is used to author linked masks, and no client-provided JavaScript or
+The workflow is one Photopea document: the source is opened once, the accepted
+and conservative carriers are used to author separate linked masks, and no client-provided JavaScript or
 polygon plan is accepted. For an interactive review, use the bounded session
 protocol:
 
 ```text
-POST /v1/photopea/sessions             source + mask + revision
+POST /v1/photopea/sessions             source + accepted mask + gaps mask + revision
   -> checkpoint_ready + session_id
 POST /v1/photopea/sessions/{id}/revisions  next raster mask + parent revision
   -> checkpoint_ready

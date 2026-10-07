@@ -48,7 +48,7 @@ reviewed mask permits a change.
 
 ### PSD as a semantic artifact
 
-The Photopea adapter transfers one source and one grayscale/alpha mask carrier
+The Photopea adapter transfers one source and two internal grayscale/alpha mask carriers
 into one document. It creates non-empty `SOURCE BACKUP`, `RESTORED`, `WITH
 GAPS`, `WORKING MASK` and editable Solid Color Fill layers, then links the
 carrier-derived raster mask to both artwork layers. The adapter proves layer

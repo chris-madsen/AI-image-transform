@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import io
 import json
+import os
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Mapping
 from urllib.error import HTTPError, URLError
@@ -63,6 +65,31 @@ def _canonical_mask_sha256(mask: np.ndarray) -> str:
     return hashlib.sha256(np.asarray(mask, dtype=np.uint8).tobytes()).hexdigest()
 
 
+def review_acceptance_token(revision: Mapping[str, object] | object) -> str:
+    """Create the one-shot token accepted only for a reviewed checkpoint."""
+    secret = os.getenv("PHOTOPEA_REVIEW_SECRET", "")
+    if not secret:
+        raise PhotopeaLiveApiUnavailable("PHOTOPEA_REVIEW_SECRET is required for PSD finalization")
+    value = asdict(revision) if is_dataclass(revision) else dict(revision)
+    message = "|".join(str(value.get(name, "")) for name in ("source_sha256", "revision_id", "checkpoint_sha256"))
+    return hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _checkpoint_overlay(source_bytes: bytes, mask_bytes: bytes) -> bytes:
+    """Create a deterministic red contour overlay for visual review."""
+    with Image.open(io.BytesIO(source_bytes)) as source_image, Image.open(io.BytesIO(mask_bytes)) as mask_image:
+        source = np.asarray(source_image.convert("RGBA"), dtype=np.uint8).copy()
+        mask = np.asarray(mask_image.convert("L"), dtype=np.uint8)
+    foreground = mask > 0
+    padded = np.pad(foreground, 1, constant_values=False)
+    edge = foreground & (
+        ~padded[:-2, 1:-1] | ~padded[2:, 1:-1] | ~padded[1:-1, :-2] | ~padded[1:-1, 2:]
+    )
+    source[edge, :3] = (255, 32, 32)
+    source[..., 3] = 255
+    return _png_bytes(source)
+
+
 class PhotopeaLiveApiAdapter:
     """Request PSD construction from a Photopea Live API outer environment."""
 
@@ -86,11 +113,7 @@ class PhotopeaLiveApiAdapter:
         mask_revision: Mapping[str, object] | object | None = None,
         mask_plan: Mapping[str, object] | object | None = None,
     ) -> bytes:
-        if mask_plan is not None:
-            raise PhotopeaLiveApiUnavailable("polygon mask plans are unsupported; submit a raster mask revision")
-        if mask_revision is None:
-            raise PhotopeaLiveApiUnavailable("photopea_mask_revision is required for Photopea-authored masks")
-        return self.export_session(source, mask, mask_revision)
+        raise PhotopeaLiveApiUnavailable("one-shot Photopea export is disabled; use the reviewed Photopea session API")
 
     def export_session(self, source: np.ndarray, mask: np.ndarray, mask_revision: Mapping[str, object] | object) -> bytes:
         """Create and validate one Photopea document from source + raster mask."""
@@ -107,6 +130,7 @@ class PhotopeaLiveApiAdapter:
                 "result_mask_sha256": actual_mask_hash,
             }, separators=(",", ":")),
             "mask_revision": json.dumps(revision, separators=(",", ":")),
+            "acceptance_token": review_acceptance_token(revision),
         }
         parts: list[bytes] = []
         for name, value in fields.items():
@@ -185,6 +209,7 @@ class PhotopeaSessionClient:
         self.timeout = timeout
         self.session_id: str | None = None
         self.checkpoint: PhotopeaSessionCheckpoint | None = None
+        self.source_bytes: bytes | None = None
 
     def _headers(self, content_type: str | None = None) -> dict[str, str]:
         headers = {"Accept": "application/json"}
@@ -232,17 +257,20 @@ class PhotopeaSessionClient:
         except (KeyError, TypeError) as exc:
             raise PhotopeaLiveApiUnavailable("invalid Photopea checkpoint") from exc
 
-    def open(self, source: np.ndarray, mask: np.ndarray, revision: Mapping[str, object] | object) -> PhotopeaSessionCheckpoint:
+    def open(self, source: np.ndarray, mask: np.ndarray, revision: Mapping[str, object] | object, *, with_gaps_mask: np.ndarray | None = None) -> PhotopeaSessionCheckpoint:
         value = asdict(revision) if is_dataclass(revision) else dict(revision)
+        source_bytes = _png_bytes(source)
+        gaps = mask if with_gaps_mask is None else with_gaps_mask
         payload = self._json_multipart(
             f"{self.api_url}/v1/photopea/sessions",
             {"mask_revision": json.dumps(value, separators=(",", ":"))},
-            (("source", "source.png", _png_bytes(source), "image/png"), ("mask", "mask-carrier.png", _mask_png_bytes(mask), "image/png")),
+            (("source", "source.png", source_bytes, "image/png"), ("mask", "mask-carrier.png", _mask_png_bytes(mask), "image/png"), ("with_gaps_mask", "with-gaps-mask-carrier.png", _mask_png_bytes(gaps), "image/png")),
             201,
         )
         checkpoint = self._checkpoint(payload)
         self.session_id = checkpoint.session_id
         self.checkpoint = checkpoint
+        self.source_bytes = source_bytes
         return checkpoint
 
     def apply_revision(self, mask: np.ndarray, revision: Mapping[str, object] | object) -> PhotopeaSessionCheckpoint:
@@ -259,11 +287,12 @@ class PhotopeaSessionClient:
         self.checkpoint = checkpoint
         return checkpoint
 
-    def finalize(self) -> tuple[bytes, PhotopeaEvidence]:
+    def finalize(self, revision: Mapping[str, object] | object) -> tuple[bytes, PhotopeaEvidence]:
         if not self.session_id:
             raise PhotopeaLiveApiUnavailable("Photopea session is not open")
+        acceptance_token = review_acceptance_token(revision)
         try:
-            with urlopen(Request(f"{self.api_url}/v1/photopea/sessions/{self.session_id}/finalize", data=b"", headers=self._headers("application/json"), method="POST"), timeout=self.timeout) as response:
+            with urlopen(Request(f"{self.api_url}/v1/photopea/sessions/{self.session_id}/finalize", data=json.dumps({"acceptance_token": acceptance_token}).encode("utf-8"), headers=self._headers("application/json"), method="POST"), timeout=self.timeout) as response:
                 payload = response.read()
                 if response.headers.get("X-Photopea-Roundtrip") != "verified":
                     raise PhotopeaLiveApiUnavailable("Photopea session finalized without pixel evidence")
@@ -301,9 +330,12 @@ class PhotopeaSessionClient:
                     result[label] = response.read()
             except (HTTPError, URLError, TimeoutError) as exc:
                 raise PhotopeaLiveApiUnavailable(f"checkpoint artifact {label} unavailable: {exc}") from exc
-        required = {"artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"}
-        if set(result) != required:
+        if "source" not in result and self.source_bytes is not None:
+            result["source"] = self.source_bytes
+        required = {"source", "artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"}
+        if not required.issubset(result):
             raise PhotopeaLiveApiUnavailable("Photopea checkpoint did not expose all required review artifacts")
+        result["overlay"] = _checkpoint_overlay(result["source"], result["mask"])
         return result
 
     def close(self) -> None:
@@ -317,3 +349,4 @@ class PhotopeaSessionClient:
             pass
         finally:
             self.session_id = None
+            self.source_bytes = None

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from .models import ArtworkInspection, JobStatus, ProcessingPolicy, ValidationResult
-from .visual_quality import evaluate_visual_quality
+from .visual_quality import _edge_quality_metrics, evaluate_visual_quality
 
 
 def _frame_score(alpha: np.ndarray) -> float:
@@ -71,6 +71,16 @@ def validate_candidate(
         status = JobStatus.REFUSED
         review.append("ambiguous_boundary_contact")
     visual_quality = evaluate_visual_quality(result, policy.visual_quality)
+    edge_chroma, contour_distance, dark_garment_halo = _edge_quality_metrics(result, original)
+    if edge_chroma > 0.35:
+        warnings.append("edge_band_background_chroma_contamination")
+        review.append("edge_chroma")
+    if contour_distance < 0.80:
+        warnings.append("partial_alpha_extends_beyond_subject_contour")
+        review.append("contour_distance")
+    if dark_garment_halo > 0.12:
+        warnings.append("dark_garment_partial_alpha_visibility")
+        review.append("dark_garment_halo")
     warnings.extend(visual_quality.warnings)
     review.extend(visual_quality.review_regions)
     if visual_quality.review_regions:
@@ -89,4 +99,7 @@ def validate_candidate(
         visual_quality.score,
         visual_quality.fragmentation_score,
         visual_quality.confidence,
+        edge_chroma,
+        contour_distance,
+        dark_garment_halo,
     )

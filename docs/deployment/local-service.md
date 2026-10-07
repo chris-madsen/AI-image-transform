@@ -45,6 +45,7 @@ Then configure the image service:
 ```bash
 PHOTOPEA_LIVE_API_URL=http://127.0.0.1:8787 \
 PHOTOPEA_LIVE_API_TOKEN='change-me' \
+PHOTOPEA_REVIEW_SECRET='shared-runtime-secret' \
 PHOTOPEA_LIVE_API_TIMEOUT=300 \
 make service
 ```
@@ -60,6 +61,14 @@ The single-source typed Photopea mask session has a separate fail-fast limit:
 
 ```bash
 PHOTOPEA_SESSION_TIMEOUT_MS=300000 npm start
+```
+
+The service also enforces a total review budget. Keep it at or below the
+Photopea session timeout unless the measured deployment SLA is intentionally
+changed:
+
+```bash
+PHOTOPEA_REVIEW_BUDGET_SECONDS=300
 ```
 
 Configure the external multimodal checkpoint reviewer separately:
@@ -114,10 +123,14 @@ uncertainty carriers and excludes border-touching masks. Optional ViTMatte
 refinement still requires its own deployment adapter and release manifest; see
 `docs/deployment/model-stack.md`.
 
-The reviewer receives checkpoint artwork, mask and dark-garment previews. It
+The reviewer receives source, checkpoint artwork, grayscale mask, red contour
+overlay and dark-garment previews. It
 must return a typed acceptance or one hash-bound grayscale correction carrier;
-it cannot return Photopea scripts. If this endpoint is absent or invalid, the
-service fails closed with `review_required`/failed instead of passing PSD.
+it cannot return Photopea scripts. The bridge requires the same
+`PHOTOPEA_REVIEW_SECRET` and accepts finalization only with a one-shot HMAC
+token bound to source, revision and current checkpoint hashes. If the reviewer
+or secret is absent/invalid, the service fails closed with
+`review_required`/failed instead of passing PSD.
 
 Core PNG, mask and preview artifacts are produced before the Photopea adapter
 is scheduled. PSD export runs in a separate background executor and updates the

@@ -203,21 +203,23 @@ class ServiceRuntime:
                 chosen_name = "artistic" if "artistic" in arrays else variants[0]
                 chosen = arrays[chosen_name]
                 mask = np.asarray(Image.open(output_dir / f"mask_{chosen_name}.png").convert("L"), dtype=np.uint8)
+                with_gaps_name = "conservative" if "conservative" in variants else chosen_name
+                with_gaps_mask = np.asarray(Image.open(output_dir / f"mask_{with_gaps_name}.png").convert("L"), dtype=np.uint8)
                 if chosen.shape != source_rgba.shape:
                     raise PhotopeaLiveApiUnavailable("Photopea source and accepted candidate dimensions differ")
                 revision = RasterMaskRevision(
                     revision_id=f"model-{sha256_bytes(mask.tobytes())[:16]}-r1",
                     parent_revision_id=None,
                     source_sha256=canonical_png_sha256(source_rgba),
-                    checkpoint_sha256="0" * 64,
+                    checkpoint_sha256="",
                     base_mask_sha256=sha256_bytes(mask.tobytes()),
                     result_mask_sha256=sha256_bytes(mask.tobytes()),
                     confidence=1.0,
                 )
                 session = PhotopeaSessionClient(self.psd_exporter.api_url, self.psd_exporter.token, timeout=self.psd_exporter.timeout)
-                checkpoint = session.open(source_rgba, mask, revision)
+                checkpoint = session.open(source_rgba, mask, revision, with_gaps_mask=with_gaps_mask)
                 _accepted_mask, checkpoint_artifacts, accepted_revision = self._review_photopea_session(session, checkpoint, revision, mask)
-                psd_payload, evidence = session.finalize()
+                psd_payload, evidence = session.finalize(accepted_revision)
                 for label, filename in (("artwork", "artwork_final.png"), ("mask", "mask_final.png"), ("preview_black", "preview_final_black.png"), ("preview_navy", "preview_final_navy.png"), ("preview_blue_jean", "preview_final_blue_jean.png")):
                     path = output_dir / filename
                     path.write_bytes(checkpoint_artifacts[label])
@@ -268,8 +270,13 @@ class ServiceRuntime:
     def _review_photopea_session(self, session: PhotopeaSessionClient, checkpoint, revision: RasterMaskRevision, mask: np.ndarray):
         current_checkpoint = PhotopeaCheckpoint(checkpoint.revision_id, checkpoint.revision_id, checkpoint.source_sha256, checkpoint.checkpoint_sha256, checkpoint.mask_sha256, checkpoint.artwork_sha256, artifact_urls=checkpoint.artifact_urls)
         current_mask = mask
-        current_revision = revision
+        current_revision = replace(revision, checkpoint_sha256=checkpoint.checkpoint_sha256)
+        deadline = time.monotonic() + float(os.getenv("PHOTOPEA_REVIEW_BUDGET_SECONDS", str(session.timeout)))
         for _index in range(4):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PhotopeaLiveApiUnavailable("Photopea visual review budget exhausted")
+            session.timeout = min(session.timeout, remaining)
             artifacts = session.download_checkpoint()
             if self.vision_reviewer is None:
                 raise PhotopeaLiveApiUnavailable("no concrete vision reviewer is configured for the Photopea checkpoint")

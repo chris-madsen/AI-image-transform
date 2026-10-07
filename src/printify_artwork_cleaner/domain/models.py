@@ -289,6 +289,9 @@ class ValidationResult:
     visual_quality_score: float = 0.0
     edge_fragmentation_score: float = 0.0
     visual_quality_confidence: float = 0.0
+    edge_chroma_contamination: float = 0.0
+    contour_distance_score: float = 1.0
+    dark_garment_halo_score: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,6 +347,9 @@ class ProcessingReport:
                 "visual_quality_score": self.validation.visual_quality_score,
                 "edge_fragmentation_score": self.validation.edge_fragmentation_score,
                 "visual_quality_confidence": self.validation.visual_quality_confidence,
+                "edge_chroma_contamination": self.validation.edge_chroma_contamination,
+                "contour_distance_score": self.validation.contour_distance_score,
+                "dark_garment_halo_score": self.validation.dark_garment_halo_score,
                 "warnings": list(self.validation.warnings),
                 "review_regions": list(self.validation.review_regions),
             },

@@ -5,9 +5,10 @@ import { inflateSync } from "node:zlib";
 import { chromium } from "playwright";
 
 const app = express();
-const upload = multer({ limits: { fileSize: 100 * 1024 * 1024, files: 2 } });
+const upload = multer({ limits: { fileSize: 100 * 1024 * 1024, files: 3 } });
 const port = Number(process.env.PORT || 8787);
 const token = process.env.PHOTOPEA_LIVE_API_TOKEN || "";
+const reviewSecret = process.env.PHOTOPEA_REVIEW_SECRET || "";
 const transferStore = new Map();
 const photopeaSessions = new Map();
 
@@ -20,6 +21,18 @@ function transfer(buffer, ttlMs = 10 * 60 * 1000) {
   transferStore.set(id, Buffer.from(buffer));
   setTimeout(() => transferStore.delete(id), ttlMs).unref();
   return id;
+}
+
+function acceptanceToken(revision) {
+  if (!reviewSecret) throw new Error("PHOTOPEA_REVIEW_SECRET is required");
+  const message = [revision.source_sha256, revision.revision_id, revision.checkpoint_sha256].join("|");
+  return crypto.createHmac("sha256", reviewSecret).update(message).digest("hex");
+}
+
+function validAcceptanceToken(revision, value) {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value) || !reviewSecret) return false;
+  const expected = acceptanceToken(revision);
+  return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(value, "hex"));
 }
 
 
@@ -167,7 +180,8 @@ function photopeaRasterMaskScript({ finalize = true } = {}) {
       function build() {
         var document = app.documents[0];
         var carrierDocument = app.documents[1];
-        if (!document || !carrierDocument) throw new Error("source and mask carrier documents are required");
+        var gapsCarrierDocument = app.documents[2];
+        if (!document || !carrierDocument || !gapsCarrierDocument) throw new Error("source and two mask carrier documents are required");
         var originalSource = document.artLayers[0];
         var carrier = carrierDocument.artLayers[0];
         if (!originalSource || !carrier) throw new Error("source or mask carrier layer is missing");
@@ -177,12 +191,15 @@ function photopeaRasterMaskScript({ finalize = true } = {}) {
         var maskCarrier = copyLayer(carrierDocument, document, "MASK CARRIER", carrier);
         maskCarrier.name = "WORKING MASK";
         maskCarrier.visible = false;
+        var gapsCarrier = copyLayer(gapsCarrierDocument, document, "GAPS MASK CARRIER", gapsCarrierDocument.artLayers[0]);
+        gapsCarrier.name = "GAPS MASK";
+        gapsCarrier.visible = false;
         carrierDocument.close(SaveOptions.DONOTSAVECHANGES);
-        var workingMask = maskCarrier;
+        gapsCarrierDocument.close(SaveOptions.DONOTSAVECHANGES);
         var restored = duplicateLayer(document, source, "RESTORED");
         applyRasterMaskFromPixels(document, maskCarrier, restored);
         var withGaps = duplicateLayer(document, source, "WITH GAPS");
-        applyRasterMaskFromPixels(document, maskCarrier, withGaps);
+        applyRasterMaskFromPixels(document, gapsCarrier, withGaps);
         var maskBase = document.artLayers.add();
         maskBase.name = "WORKING MASK BASE";
         maskBase.visible = false;
@@ -200,6 +217,7 @@ function photopeaRasterMaskScript({ finalize = true } = {}) {
         hideAll(document);
         restored.visible = true;
         document.activeLayer = restored;
+        document.name = "SOURCE INPUT";
         message("PHOTOPEA_STRUCTURE_BUILT");
         message("PHOTOPEA_MASK_VERIFIED");
         if (${finalize ? "true" : "false"}) {
@@ -364,23 +382,19 @@ function photopeaRevisionScript(revisionId, { finalize = false } = {}) {
           if (candidate !== sourceDocument && candidate.artLayers && candidate.artLayers.length) carrierDocument = candidate;
         }
         if (!sourceDocument || !carrierDocument) throw new Error("source and revision mask documents are required");
-        var source = sourceDocument.artLayers[0];
+        var source = findLayer(sourceDocument, "SOURCE BACKUP");
         var carrier = carrierDocument.artLayers[0];
         if (!source || !carrier) throw new Error("source or revision carrier layer is missing");
         app.activeDocument = sourceDocument;
         document = sourceDocument;
-        source.name = "SOURCE BACKUP";
         source.visible = true;
         var maskCarrier = copyLayer(carrierDocument, document, "MASK CARRIER " + ${safeRevisionId}, carrier);
         source.visible = false;
         maskCarrier.name = "WORKING MASK " + ${safeRevisionId};
         maskCarrier.visible = false;
         carrierDocument.close(SaveOptions.DONOTSAVECHANGES);
-        var workingMask = maskCarrier;
         var restored = duplicateLayer(document, source, "RESTORED " + ${safeRevisionId});
         applyRasterMaskFromPixels(document, maskCarrier, restored);
-        var withGaps = duplicateLayer(document, source, "WITH GAPS " + ${safeRevisionId});
-        applyRasterMaskFromPixels(document, maskCarrier, withGaps);
         var maskBase = document.artLayers.add();
         maskBase.name = "WORKING MASK BASE " + ${safeRevisionId}; maskBase.visible = false;
         selectAll(document); fillColor(document, 0, 0, 0); deselect(document);
@@ -406,9 +420,24 @@ function photopeaSavePsdScript() {
   return `
     (function () {
       try {
+        var document = app.activeDocument;
+        var restored = null;
+        for (var index = document.layers.length - 1; index >= 0; index -= 1) {
+          var name = String(document.layers[index].name);
+          if (name === "RESTORED" || name.indexOf("RESTORED ") === 0) {
+            restored = document.layers[index];
+            break;
+          }
+        }
+        if (!restored) throw new Error("accepted RESTORED layer is missing");
+        for (var layerIndex = 0; layerIndex < document.layers.length; layerIndex += 1) {
+          document.layers[layerIndex].visible = false;
+        }
+        restored.visible = true;
+        document.activeLayer = restored;
         app.activeDocument.clearHistory();
         app.echoToOE("PHOTOPEA_EXPORT:psd");
-        app.activeDocument.saveToOE("psd:true");
+        document.saveToOE("psd:true");
       } catch (error) {
         app.echoToOE("PHOTOPEA_FINALIZE_FAILED:" + String(error));
       }
@@ -530,9 +559,11 @@ function rasterMaskHash(carrierBytes) {
 
 function parseRasterRevision(raw) {
   const revision = typeof raw === "string" ? JSON.parse(raw || "{}") : raw;
-  const hashFields = ["source_sha256", "checkpoint_sha256", "base_mask_sha256", "result_mask_sha256"];
+  const hashFields = ["source_sha256", "base_mask_sha256", "result_mask_sha256"];
   if (revision && typeof revision === "object" && ["subject_polygons", "remove_polygons", "add_polygons", "selection_path"].some((field) => Object.prototype.hasOwnProperty.call(revision, field))) throw new Error("polygon mask plans are unsupported");
-  if (!revision || typeof revision !== "object" || typeof revision.revision_id !== "string" || !revision.revision_id || revision.operation !== "replace_mask" || hashFields.some((field) => !/^[0-9a-f]{64}$/.test(String(revision[field] || ""))) || typeof revision.confidence !== "number" || revision.confidence < 0 || revision.confidence > 1) throw new Error("invalid raster mask revision");
+  const initial = revision && (revision.parent_revision_id === null || revision.parent_revision_id === undefined);
+  const checkpointValid = initial ? (revision.checkpoint_sha256 === "" || revision.checkpoint_sha256 === undefined || revision.checkpoint_sha256 === null) : /^[0-9a-f]{64}$/.test(String(revision?.checkpoint_sha256 || ""));
+  if (!revision || typeof revision !== "object" || typeof revision.revision_id !== "string" || !revision.revision_id || revision.operation !== "replace_mask" || !checkpointValid || hashFields.some((field) => !/^[0-9a-f]{64}$/.test(String(revision[field] || ""))) || typeof revision.confidence !== "number" || revision.confidence < 0 || revision.confidence > 1) throw new Error("invalid raster mask revision");
   return revision;
 }
 function comparePixels(left, right, tolerance = 0) {
@@ -664,7 +695,7 @@ function photopeaOuterPage(resultToken, inputTokens, initialScript, authorizatio
       const frame = document.getElementById('photopea');
       let phase = 'boot'; let fileIndex = 0; let exportLabels = []; let pendingScript = null; let roundtripIndex = 0;
       const bridgeAuthorization = ${JSON.stringify(authorization || '')};
-      const initialUrls = ['/v1/photopea/blob/${inputTokens.source}', '/v1/photopea/blob/${inputTokens.mask}'];
+      const initialUrls = ['/v1/photopea/blob/${inputTokens.source}', '/v1/photopea/blob/${inputTokens.mask}', '/v1/photopea/blob/${inputTokens.withGapsMask}'];
       let revisionUrls = [];
       const initialScript = ${JSON.stringify(initialScript)};
       const checkpointScripts = ${JSON.stringify(["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"].map((label) => photopeaCheckpointExportScript(label)))};
@@ -700,7 +731,7 @@ function photopeaOuterPage(resultToken, inputTokens, initialScript, authorizatio
       async function signal(path, body) { await fetch('/v1/photopea/' + path + '/${resultToken}', { method: 'POST', headers: internalHeaders('text/plain'), body: body || '' }); }
       window.startPhotopeaRoundTrip = async function (id) { const buffer = await fetch('/v1/photopea/blob/' + id).then((response) => response.arrayBuffer()); phase = 'roundtrip-file'; frame.contentWindow.postMessage(buffer, '*', [buffer]); };
       async function sendRevisionFile(index) { const buffer = await fetch(revisionUrls[index]).then((response) => response.arrayBuffer()); frame.contentWindow.postMessage(buffer, '*', [buffer]); }
-      window.startRevision = async function (maskId, sourceId, script) { pendingScript = script; revisionUrls = ['/v1/photopea/blob/' + sourceId, '/v1/photopea/blob/' + maskId]; phase = 'revision-close'; frame.contentWindow.postMessage('while (app.documents.length > 0) app.documents[0].close(SaveOptions.DONOTSAVECHANGES);', '*'); };
+      window.startRevision = async function (maskId, script) { pendingScript = script; revisionUrls = ['/v1/photopea/blob/' + maskId]; phase = 'revision-mask'; };
       window.startFinal = function (script) { phase = 'final-script'; frame.contentWindow.postMessage(script, '*'); };
       window.addEventListener('message', async (event) => {
         if (event.source !== frame.contentWindow) return;
@@ -715,12 +746,10 @@ function photopeaOuterPage(resultToken, inputTokens, initialScript, authorizatio
         if (event.data instanceof ArrayBuffer) { await receiveBinary(event.data); return; }
         if (event.data !== 'done') return;
         if (phase === 'boot') { phase = 'files'; await sendFile(fileIndex); }
-        else if (phase === 'files' && fileIndex < 1) { fileIndex += 1; await sendFile(fileIndex); }
+        else if (phase === 'files' && fileIndex < 2) { fileIndex += 1; await sendFile(fileIndex); }
         else if (phase === 'files') { phase = 'script'; frame.contentWindow.postMessage(initialScript, '*'); }
-        else if (phase === 'revision-close') { phase = 'revision-source'; await sendRevisionFile(0); }
-        else if (phase === 'revision-source') { phase = 'revision-source-mark'; frame.contentWindow.postMessage('app.activeDocument.name = "SOURCE INPUT";', '*'); }
-        else if (phase === 'revision-source-mark') { phase = 'revision-mask'; await sendRevisionFile(1); }
-        else if (phase === 'revision-mask') { phase = 'revision-script'; frame.contentWindow.postMessage(pendingScript, '*'); }
+        else if (phase === 'revision-mask') { phase = 'revision-script'; await sendRevisionFile(0); }
+        else if (phase === 'revision-script') { frame.contentWindow.postMessage(pendingScript, '*'); }
         else if (phase === 'checkpoint-export' || phase === 'revision-export') { return; }
         else if (phase === 'roundtrip-file') { phase = 'roundtrip-export'; roundtripIndex = 0; frame.contentWindow.postMessage(roundtripScripts[roundtripIndex], '*'); }
       });
@@ -737,6 +766,7 @@ class PhotopeaLiveSession {
 
   static async open(inputFiles, revision, options = {}) {
     if (sha256(inputFiles.source) !== revision.source_sha256) throw new Error("source hash does not match raster revision");
+    if (!inputFiles.withGapsMask) inputFiles.withGapsMask = inputFiles.mask;
     const launchOptions = { headless: true };
     if (process.env.PHOTOPEA_CHROMIUM_EXECUTABLE_PATH) launchOptions.executablePath = process.env.PHOTOPEA_CHROMIUM_EXECUTABLE_PATH;
     const browser = await chromium.launch(launchOptions);
@@ -761,7 +791,7 @@ class PhotopeaLiveSession {
     app.on(`photopea:${this.resultToken}:failure`, this.onFailure = (message) => this.fail(new Error(message)));
     app.on(`photopea:${this.resultToken}:done`, this.onDone = () => this.signalDone());
     await this.page.goto(`http://127.0.0.1:${port}/healthz`, { waitUntil: "domcontentloaded", timeout: 120_000 });
-    const inputTokens = { source: transfer(this.inputFiles.source), mask: transfer(this.inputFiles.mask) };
+    const inputTokens = { source: transfer(this.inputFiles.source), mask: transfer(this.inputFiles.mask), withGapsMask: transfer(this.inputFiles.withGapsMask || this.inputFiles.mask) };
     const checkpoint = this.waitForCheckpoint(0);
     const initialScript = photopeaRasterMaskScript({ finalize: false });
     await this.page.setContent(photopeaOuterPage(this.resultToken, inputTokens, initialScript, token ? `Bearer ${token}` : ""), { waitUntil: "domcontentloaded", timeout: 120_000 });
@@ -840,12 +870,13 @@ class PhotopeaLiveSession {
       checkpoint_sha256: sha256(Buffer.concat(labels.map((label) => this.checkpoints[label].rgba))),
       mask_sha256: sha256(this.checkpoints.mask.rgba),
       artwork_sha256: sha256(this.checkpoints.artwork.rgba),
-      artifact_urls: sessionId ? Object.fromEntries(labels.map((label) => [label, `/v1/photopea/sessions/${sessionId}/checkpoints/${label}`])) : {},
+      artifact_urls: sessionId ? Object.assign({ source: `/v1/photopea/sessions/${sessionId}/checkpoints/source` }, Object.fromEntries(labels.map((label) => [label, `/v1/photopea/sessions/${sessionId}/checkpoints/${label}`]))) : {},
     };
   }
 
   checkpointArtifact(label) {
     const allowed = ["artwork", "mask", "preview_black", "preview_navy", "preview_blue_jean"];
+    if (label === "source") return this.inputFiles.source;
     if (!allowed.includes(label) || !this.checkpointBytes[label]) throw new Error("checkpoint artifact is unavailable");
     return this.checkpointBytes[label];
   }
@@ -856,9 +887,8 @@ class PhotopeaLiveSession {
     const previous = this.checkpointSequence;
     this.inputFiles.mask = mask; this.currentRevision = revision; this.checkpoints = {}; this.checkpointBytes = {}; this.roundTrip = {}; this.checkpointReadyScheduled = false;
     const checkpoint = this.waitForCheckpoint(previous);
-    const sourceToken = transfer(this.inputFiles.source);
     const maskToken = transfer(mask);
-    await this.page.evaluate(({ sourceId, maskId, script }) => window.startRevision(maskId, sourceId, script), { sourceId: sourceToken, maskId: maskToken, script: photopeaRevisionScript(revision.revision_id) });
+    await this.page.evaluate(({ maskId, script }) => window.startRevision(maskId, script), { maskId: maskToken, script: photopeaRevisionScript(revision.revision_id) });
     await checkpoint;
     return this.checkpointSummary(revision);
   }
@@ -892,6 +922,7 @@ async function exportViaPhotopea(inputFiles, revision, options = {}) {
   finally { await session.close(); }
 }
 
+app.use(express.json({ limit: "64kb" }));
 app.use(express.raw({ type: "application/octet-stream", limit: "200mb" }));
 app.get("/healthz", (_request, response) => response.json({ status: "ok", provider: "photopea-live" }));
 app.get("/v1/photopea/blob/:id", (request, response) => {
@@ -933,19 +964,23 @@ function sessionResponse(sessionId, record) {
 app.post("/v1/photopea/sessions", upload.fields([
   { name: "source", maxCount: 1 },
   { name: "mask", maxCount: 1 },
+  { name: "with_gaps_mask", maxCount: 1 },
 ]), async (request, response) => {
   if (!authorized(request)) return response.status(401).json({ code: "unauthorized" });
   const source = request.files?.source?.[0]?.buffer;
   const mask = request.files?.mask?.[0]?.buffer;
+  const withGapsMask = request.files?.with_gaps_mask?.[0]?.buffer || mask;
   if (!source || !mask) return response.status(400).json({ code: "missing_source_or_mask" });
   let revision;
   try { revision = parseRasterRevision(request.body?.mask_revision); }
   catch (error) { return response.status(400).json({ code: "invalid_photopea_mask_revision", message: String(error) }); }
   try {
     if (rasterMaskHash(mask) !== revision.result_mask_sha256) throw new Error("initial raster mask hash mismatch");
-    const live = await PhotopeaLiveSession.open({ source, mask }, revision, { timeoutMs: Number(process.env.PHOTOPEA_SESSION_TIMEOUT_MS || 300_000) });
+    const live = await PhotopeaLiveSession.open({ source, mask, withGapsMask }, revision, { timeoutMs: Number(process.env.PHOTOPEA_SESSION_TIMEOUT_MS || 300_000) });
     const sessionId = crypto.randomUUID();
-    const record = { live, revision, checkpoint: live.checkpointSummary(revision), status: "checkpoint_ready", expiresAt: new Date(Date.now() + 300_000).toISOString() };
+    const initialCheckpoint = live.checkpointSummary(revision);
+    const effectiveRevision = Object.assign({}, revision, { checkpoint_sha256: initialCheckpoint.checkpoint_sha256 });
+    const record = { live, revision: effectiveRevision, checkpoint: live.checkpointSummary(effectiveRevision), status: "checkpoint_ready", expiresAt: new Date(Date.now() + 300_000).toISOString() };
     const timer = setTimeout(() => { const current = photopeaSessions.get(sessionId); if (current) { current.live.close().catch(() => {}); photopeaSessions.delete(sessionId); } }, 300_000);
     timer.unref(); record.timer = timer;
     photopeaSessions.set(sessionId, record);
@@ -991,6 +1026,7 @@ app.post("/v1/photopea/sessions/:id/finalize", async (request, response) => {
   if (!authorized(request)) return response.status(401).json({ code: "unauthorized" });
   const record = photopeaSessions.get(request.params.id);
   if (!record) return response.status(404).json({ code: "photopea_session_not_found" });
+  if (!validAcceptanceToken(record.revision, request.body?.acceptance_token)) return response.status(409).json({ code: "review_acceptance_required" });
   try {
     const result = await record.live.finalize(record.revision);
     if (result.evidence.checkpoint_sha256 !== record.checkpoint.checkpoint_sha256) throw new Error("final PSD evidence does not match the accepted checkpoint");
@@ -1013,6 +1049,7 @@ app.post("/v1/photopea/export", upload.fields([
   { name: "mask", maxCount: 1 },
 ]), async (request, response) => {
   if (!authorized(request)) return response.status(401).json({ code: "unauthorized" });
+  return response.status(409).json({ code: "photopea_session_required", message: "one-shot export is disabled; use the reviewed session workflow" });
   const source = request.files?.source?.[0]?.buffer;
   const mask = request.files?.mask?.[0]?.buffer;
   if (!source || !mask) return response.status(400).json({ code: "missing_source_or_mask" });
@@ -1020,6 +1057,7 @@ app.post("/v1/photopea/export", upload.fields([
   try {
     revision = parseRasterRevision(request.body?.mask_revision);
   } catch (error) { return response.status(400).json({ code: "invalid_photopea_mask_revision", message: String(error) }); }
+  if (!validAcceptanceToken(revision, request.body?.acceptance_token)) return response.status(409).json({ code: "review_acceptance_required" });
   try {
     if (rasterMaskHash(mask) !== revision.result_mask_sha256) return response.status(409).json({ code: "raster_mask_hash_mismatch" });
     const result = await exportViaPhotopea({ source, mask }, revision, { timeoutMs: Number(process.env.PHOTOPEA_SESSION_TIMEOUT_MS || 300_000) });

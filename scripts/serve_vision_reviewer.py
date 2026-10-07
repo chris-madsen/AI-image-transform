@@ -43,9 +43,10 @@ def _data_url(payload: bytes) -> str:
 def _review_prompt() -> str:
     return """You are a strict print-artwork quality reviewer.
 
-Inspect the supplied Photopea checkpoint images as one result. The transparent
-artwork and grayscale mask must be judged together with the black, navy and
-blue-jean previews. Compare the checkpoint to the source pixels mentally: RGB
+Inspect the supplied Photopea checkpoint images as one result. The source,
+transparent artwork, grayscale mask and red contour overlay must be judged
+together with the black, navy and blue-jean previews. Compare the checkpoint to
+the source pixels: RGB
 must not have been regenerated or repainted.
 
 Accept only when all of these are true:
@@ -130,14 +131,14 @@ def health() -> dict[str, str]:
 
 
 @app.post("/v1/review")
-async def review(checkpoint: str = Form(...), artwork: UploadFile = File(...), mask: UploadFile = File(...), preview_black: UploadFile = File(...), preview_navy: UploadFile = File(...), preview_blue_jean: UploadFile = File(...)) -> dict[str, Any]:
+async def review(checkpoint: str = Form(...), source: UploadFile = File(...), artwork: UploadFile = File(...), mask: UploadFile = File(...), overlay: UploadFile = File(...), preview_black: UploadFile = File(...), preview_navy: UploadFile = File(...), preview_blue_jean: UploadFile = File(...)) -> dict[str, Any]:
     try:
         checkpoint_payload = json.loads(checkpoint)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=422, detail="checkpoint must be JSON") from exc
     if not isinstance(checkpoint_payload, dict):
         raise HTTPException(status_code=422, detail="checkpoint must be an object")
-    uploads = {item.filename or "unknown": item for item in (artwork, mask, preview_black, preview_navy, preview_blue_jean)}
+    uploads = {"source": source, "artwork": artwork, "mask": mask, "overlay": overlay, "preview_black": preview_black, "preview_navy": preview_navy, "preview_blue_jean": preview_blue_jean}
     images = {name: await item.read() for name, item in uploads.items()}
     if any(not value for value in images.values()):
         raise HTTPException(status_code=422, detail="checkpoint images must not be empty")

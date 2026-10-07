@@ -18,6 +18,9 @@ class VisualQualityResult:
     confidence: float
     warnings: tuple[str, ...]
     review_regions: tuple[str, ...]
+    edge_chroma_contamination: float = 0.0
+    contour_distance_score: float = 1.0
+    dark_garment_halo_score: float = 0.0
 
 
 def _edge_fragmentation_score(alpha: np.ndarray) -> float:
@@ -34,6 +37,52 @@ def _edge_fragmentation_score(alpha: np.ndarray) -> float:
     )
     isolated_ratio = float(np.count_nonzero(foreground & (neighbours <= 1))) / foreground_pixels
     return float(np.clip(1.0 - isolated_ratio * 6.0, 0.0, 1.0))
+
+
+def _dilate(mask: np.ndarray, radius: int) -> np.ndarray:
+    value = np.asarray(mask, dtype=bool)
+    padded = np.pad(value, radius, mode="constant", constant_values=False)
+    height, width = value.shape
+    return np.logical_or.reduce(
+        [
+            padded[top:top + height, left:left + width]
+            for top in range(radius * 2 + 1)
+            for left in range(radius * 2 + 1)
+        ]
+    )
+
+
+def _edge_quality_metrics(rgba: np.ndarray, source: np.ndarray | None = None) -> tuple[float, float, float]:
+    """Measure fringe contamination without pretending to understand semantics.
+
+    The metrics are deliberately conservative safety signals. They do not
+    replace the semantic reviewer or the approved golden reference; they make
+    broad low-alpha veils and removed-background colour leaking into a fringe
+    visible to the validation boundary.
+    """
+    result = np.asarray(rgba, dtype=np.uint8)
+    alpha = result[..., 3]
+    partial = (alpha > 0) & (alpha < 160)
+    if not np.any(partial):
+        return 0.0, 1.0, 0.0
+
+    opaque = alpha >= 240
+    contour = _dilate(opaque, 3)
+    outside_contour = partial & ~contour
+    contour_distance_score = float(1.0 - np.mean(outside_contour[partial]))
+
+    dark_rgb = result[..., :3].astype(np.float32) * (alpha[..., None].astype(np.float32) / 255.0)
+    dark_garment_halo_score = float(np.mean(np.max(dark_rgb[partial], axis=1)) / 255.0)
+
+    chroma_contamination = 0.0
+    if source is not None:
+        original = np.asarray(source, dtype=np.uint8)
+        removed = (original[..., 3] > 0) & (alpha == 0)
+        if np.any(removed):
+            background = np.median(original[..., :3][removed], axis=0).astype(np.float32)
+            distance = np.max(np.abs(result[..., :3].astype(np.float32) - background), axis=-1)
+            chroma_contamination = float(np.mean((distance <= 28)[partial]))
+    return chroma_contamination, contour_distance_score, dark_garment_halo_score
 
 
 def evaluate_visual_quality(
