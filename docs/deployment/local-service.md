@@ -71,6 +71,23 @@ VISION_REVIEW_TIMEOUT=120 \
 make service
 ```
 
+An OpenAI-compatible deployment adapter is provided for the multimodal visual
+gate. It is intentionally fail-closed: it can accept a checkpoint only with a
+high-confidence structured response; it does not generate a correction mask.
+Run it separately and point `VISION_REVIEW_ENDPOINT` at it:
+
+```bash
+VISION_LLM_API_KEY='injected-at-runtime' \
+VISION_LLM_MODEL='<vision-model-release>' \
+VISION_LLM_ENDPOINT='https://api.openai.com/v1/chat/completions' \
+uvicorn scripts.serve_vision_reviewer:app --host 127.0.0.1 --port 8010
+```
+
+If the model rejects a checkpoint, the processing service remains
+`review_required`; a trusted raster-correction provider is still required for
+an automatic revision. Never treat a text-only model response as visual
+evidence and never put the API key in repository files.
+
 Configure both independent proposal endpoints and their release pins before
 enabling automatic model proposals:
 

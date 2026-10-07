@@ -34,20 +34,25 @@ def apply_variant(rgba: np.ndarray, name: str, policy: ProcessingPolicy, plan: R
     source = np.asarray(rgba, dtype=np.uint8)
     alpha = source[..., 3]
     selected_plan = plan or build_render_plan(policy, (name,))
-    if name == VariantName.CONSERVATIVE.value:
+    strategy = selected_plan.edge_strategy
+    forced_halftone = strategy is EdgeStrategy.HALFTONE or selected_plan.mode is ProcessingMode.HALFTONE_DARK_GARMENT
+    forced_binary = strategy is EdgeStrategy.BINARY_ALPHA
+    forced_soft = strategy is EdgeStrategy.CONTROLLED_SOFT_ALPHA
+    if name == VariantName.HALFTONE.value or forced_halftone:
+        # The print-safe strategy is authoritative.  In particular, an
+        # ``artistic`` request must not bypass a HALFTONE policy and re-open
+        # continuous alpha that Printify can turn into a DTG halo.
+        rendered_alpha = halftone_alpha(alpha, policy.halftone_cell)
+    elif name == VariantName.BINARY_ALPHA.value or forced_binary:
+        rendered_alpha = binary_alpha(alpha, 128)
+    elif name == VariantName.CONTROLLED_SOFT_ALPHA.value or forced_soft:
+        rendered_alpha = np.clip(alpha.astype(np.int16) * 5 // 4, 0, 255).astype(np.uint8)
+    elif name == VariantName.CONSERVATIVE.value:
         rendered_alpha = alpha
     elif name == VariantName.ARTISTIC.value:
         # Keep the approved perimeter fade. Binarising it would discard the
         # visual treatment produced by compose_artistic_perimeter_alpha().
         rendered_alpha = alpha
-    elif name == VariantName.BINARY_ALPHA.value:
-        rendered_alpha = binary_alpha(alpha, 128)
-    elif name == VariantName.HALFTONE.value or selected_plan.edge_strategy is EdgeStrategy.HALFTONE or selected_plan.mode is ProcessingMode.HALFTONE_DARK_GARMENT:
-        rendered_alpha = halftone_alpha(alpha, policy.halftone_cell)
-    elif name == VariantName.CONTROLLED_SOFT_ALPHA.value or selected_plan.edge_strategy is EdgeStrategy.CONTROLLED_SOFT_ALPHA:
-        rendered_alpha = np.clip(alpha.astype(np.int16) * 5 // 4, 0, 255).astype(np.uint8)
-    elif selected_plan.edge_strategy is EdgeStrategy.BINARY_ALPHA:
-        rendered_alpha = binary_alpha(alpha)
     else:
         rendered_alpha = alpha
     return canonicalize_hidden_rgb(np.dstack((source[..., :3], rendered_alpha)).astype(np.uint8))

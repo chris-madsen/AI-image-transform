@@ -94,3 +94,31 @@ resources exist:
 Until these resources are configured, the service is safe to run in
 `review_required` mode, but it must not be presented as production automatic
 matting for arbitrary artwork.
+
+## Follow-up verification on 2026-10-07
+
+- Fixed render-strategy dispatch so `edge_strategy=halftone`, `binary_alpha`,
+  or `controlled_soft_alpha` cannot be bypassed by requesting the
+  `artistic` or `conservative` variant. This prevents a continuous-alpha
+  candidate from being emitted when the policy explicitly requests a
+  print-safe strategy.
+- Added `scripts/serve_vision_reviewer.py`, a deployment-only
+  OpenAI-compatible multimodal adapter. It sends the exact artwork, mask,
+  black, navy and blue-jean checkpoint bytes to a vision model and accepts
+  only a high-confidence structured decision. It cannot generate scripts,
+  polygons or an unbound correction mask; a rejection therefore remains
+  `review_required`.
+- Re-ran a full-resolution Photopea session with the corrected alpha-channel
+  carrier. The result is in ignored
+  `artifacts/model-acceptance-20261006/photopea-t8-session-20261007-r2/`:
+  4500×5400 source, 223.34 seconds, reopened PSD, 46,538,102 bytes,
+  source/checkpoint/mask/artwork hashes and all required editable layers.
+- The exported navy and black previews were visually inspected. Both ears,
+  eyes, whiskers and the visible foliage perimeter remain present; the outer
+  background is transparent rather than a rectangular fill. The first failed
+  t8 attempt used RGB luminance instead of the alpha channel and was rejected
+  and not used as evidence.
+- The owner golden comparator still remains the authoritative acceptance gate;
+  the t8 candidate has not been promoted to production or marked as a golden
+  match. The external OpenAI and Anthropic endpoints in this environment
+  returned HTTP 401, so no multimodal acceptance was fabricated.

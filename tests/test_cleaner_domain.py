@@ -139,6 +139,32 @@ def test_artistic_variant_keeps_partial_alpha() -> None:
     assert rendered[..., 3].tolist() == [[0, 96], [192, 255]]
 
 
+def test_print_safe_strategy_cannot_be_bypassed_by_artistic_variant() -> None:
+    source = np.zeros((8, 8, 4), dtype=np.uint8)
+    source[..., :3] = 120
+    source[..., 3] = np.arange(64, dtype=np.uint8).reshape(8, 8) * 4
+
+    rendered = apply_variant(
+        source,
+        "artistic",
+        ProcessingPolicy(edge_strategy=EdgeStrategy.HALFTONE, halftone_cell=4),
+    )
+
+    assert set(np.unique(rendered[..., 3])) <= {0, 255}
+
+
+def test_binary_and_controlled_soft_strategies_override_named_variant() -> None:
+    source = np.zeros((1, 3, 4), dtype=np.uint8)
+    source[..., :3] = 120
+    source[..., 3] = [64, 128, 255]
+
+    binary = apply_variant(source, "artistic", ProcessingPolicy(edge_strategy=EdgeStrategy.BINARY_ALPHA))
+    soft = apply_variant(source, "conservative", ProcessingPolicy(edge_strategy=EdgeStrategy.CONTROLLED_SOFT_ALPHA))
+
+    assert binary[..., 3].tolist() == [[0, 255, 255]]
+    assert soft[..., 3].tolist() == [[80, 160, 255]]
+
+
 def test_halo_score_is_canvas_area_not_partial_area() -> None:
     rgba = np.zeros((10, 10, 4), dtype=np.uint8)
     rgba[:2, :, 3] = 32
